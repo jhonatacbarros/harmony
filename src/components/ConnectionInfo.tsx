@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState, type FC } from 'react';
 import { Copy, Check, Globe, Network, Users, Key } from 'lucide-react';
 import { StreamStatus } from '../types';
 

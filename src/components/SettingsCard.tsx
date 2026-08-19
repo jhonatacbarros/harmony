@@ -1,4 +1,4 @@
-import React from 'react';
+import type { FC } from 'react';
 import { Settings, Volume2, Mic, Lock, Globe, HardDrive } from 'lucide-react';
 import { StreamSettings, StreamStatus } from '../types';
 

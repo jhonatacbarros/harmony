@@ -1,4 +1,4 @@
-import React from 'react';
+import type { FC } from 'react';
 import { Tv, Radio } from 'lucide-react';
 import { StreamStatus } from '../types';
 

@@ -1,4 +1,4 @@
-import React from 'react';
+import type { FC } from 'react';
 import { Play, Pause, Square, AlertCircle, Loader2 } from 'lucide-react';
 import { StreamStatus } from '../types';
 
