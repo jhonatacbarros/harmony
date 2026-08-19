@@ -59,6 +59,7 @@ fn main() {
     };
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             get_local_ip,
