@@ -27,6 +27,7 @@ export function App() {
     fps: 60,
     enableAudio: true,
     enableMic: false,
+    isolateDiscord: true,
     port: 8080,
     pin: '',
     enableCloudflare: true,

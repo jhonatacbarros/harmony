@@ -6,6 +6,7 @@ export interface StreamSettings {
   fps: FrameRate;
   enableAudio: boolean;
   enableMic: boolean;
+  isolateDiscord: boolean;
   port: number;
   pin: string;
   enableCloudflare: boolean;

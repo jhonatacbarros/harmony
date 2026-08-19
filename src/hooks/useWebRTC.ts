@@ -146,14 +146,24 @@ export function useWebRTC(settings: StreamSettings) {
       const width = settings.quality === '1080p' ? 1920 : 1280;
       const height = settings.quality === '1080p' ? 1080 : 720;
 
-      // Request screen capture with audio
+      // Request screen capture with audio constraints
+      const audioOptions: boolean | MediaTrackConstraints = settings.enableAudio
+        ? (settings.isolateDiscord
+            ? {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+              }
+            : true)
+        : false;
+
       const displayStream = await navigator.mediaDevices.getDisplayMedia({
         video: {
           width: { ideal: width, max: width },
           height: { ideal: height, max: height },
           frameRate: { ideal: settings.fps, max: settings.fps },
         },
-        audio: settings.enableAudio,
+        audio: audioOptions,
       });
 
       // Handle user stopping stream from the native browser/OS banner
@@ -166,7 +176,12 @@ export function useWebRTC(settings: StreamSettings) {
       // If microphone is enabled, mix mic audio track
       if (settings.enableMic) {
         try {
-          const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const micStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+            },
+          });
           const audioCtx = new AudioContext();
           const destination = audioCtx.createMediaStreamDestination();
 

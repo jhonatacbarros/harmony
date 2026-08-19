@@ -1,6 +1,7 @@
-import type { FC } from 'react';
-import { Sliders, Volume2, Mic, Lock, Globe, Server, Cpu, Zap } from 'lucide-react';
+import { useState, type FC } from 'react';
+import { Sliders, Volume2, Mic, Lock, Globe, Server, Cpu, Zap, VolumeX, HelpCircle } from 'lucide-react';
 import { StreamSettings, StreamStatus } from '../types';
+import { DiscordAudioGuide } from './DiscordAudioGuide';
 
 interface SettingsCardProps {
   settings: StreamSettings;
@@ -13,6 +14,7 @@ export const SettingsCard: FC<SettingsCardProps> = ({
   onChange,
   status,
 }) => {
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
   const isStreaming = status === 'live' || status === 'paused';
 
   const updateSetting = <K extends keyof StreamSettings>(
@@ -175,7 +177,58 @@ export const SettingsCard: FC<SettingsCardProps> = ({
               </div>
             </button>
           </div>
+
+          {/* Modo Anti-Eco Discord (Mutar Voz da Call) */}
+          <div
+            className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
+              settings.isolateDiscord
+                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200 shadow-glow-emerald/10'
+                : 'border-white/[0.06] bg-surface-300/40 text-slate-400'
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <div className={`p-1.5 rounded-lg ${settings.isolateDiscord ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-500'}`}>
+                <VolumeX className="h-4 w-4" />
+              </div>
+              <div className="text-left">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-semibold text-white">Modo Anti-Eco Discord</span>
+                  <button
+                    type="button"
+                    onClick={() => setIsGuideOpen(true)}
+                    className="text-slate-400 hover:text-indigo-300 transition-colors p-0.5"
+                    title="Ver como funciona e como isolar o áudio do jogo"
+                  >
+                    <HelpCircle className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <div className="text-[10px] text-slate-400">
+                  Filtro de eco e supressão para amigos não se ouvirem
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              disabled={isStreaming}
+              onClick={() => updateSetting('isolateDiscord', !settings.isolateDiscord)}
+              className={`w-8 h-4.5 rounded-full transition-colors relative flex items-center px-0.5 ${
+                settings.isolateDiscord ? 'bg-emerald-500' : 'bg-slate-700'
+              } ${isStreaming ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              <div
+                className={`w-3.5 h-3.5 rounded-full bg-white transition-transform ${
+                  settings.isolateDiscord ? 'translate-x-3.5' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
         </div>
+
+        <DiscordAudioGuide
+          isOpen={isGuideOpen}
+          onClose={() => setIsGuideOpen(false)}
+        />
 
         {/* Network & Security Inputs */}
         <div className="grid grid-cols-2 gap-2.5 pt-1">

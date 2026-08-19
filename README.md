@@ -49,9 +49,23 @@ Você pode baixar a versão mais recente pronta para Windows (`.exe` ou `.msi`) 
 4. *(Opcional)* Defina um **PIN de Acesso**.
 5. Clique no botão **"Iniciar Transmissão de Tela"**.
 6. Na janela do Windows que abrir:
-   - Vá na aba **"Tela Inteira"** (ou escolha a janela do jogo).
-   - **Marque a caixinha "Compartilhar áudio do sistema"**.
+   - Para transmitir apenas o som do jogo **sem o Discord**: vá na aba **"Janela"** e escolha a janela do jogo.
+   - Para transmitir todo o som do computador: vá na aba **"Tela Inteira"** e marque **"Compartilhar áudio do sistema"**.
 7. Copie o **Link Público (Cloudflare)** gerado e envie para seus amigos!
+
+---
+
+## 🎧 Como Evitar que Amigos no Discord se Ouçam na Stream
+
+Quando você está em call no Discord com os mesmos amigos que estão assistindo à stream, o Windows pode transmitir a voz deles de volta se você capturar a "Tela Inteira". Existem **2 soluções simples**:
+
+1. **Método 1 (Recomendado - Zero Instalação):**
+   * Ao clicar em *Iniciar Transmissão*, escolha a aba **"Janela"** e selecione o jogo.
+   * Dessa forma, o Windows captura **exclusivamente o áudio do jogo**, ignorando completamente a chamada do Discord!
+
+2. **Método 2 (Separar Saída no Discord):**
+   * No Discord, vá em **Configurações de Usuário ⚙️ > Voz e Vídeo > Dispositivo de Saída**.
+   * Escolha o seu fone/headset específico em vez de "Default" (Padrão). O Harmony continuará transmitindo o áudio padrão dos jogos sem capturar o canal do Discord.
 
 ---
 
