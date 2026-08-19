@@ -25,25 +25,50 @@ impl TunnelManager {
 
         let target_url = format!("http://localhost:{}", port);
 
-        // Attempt to find cloudflared binary
-        let mut cmd = Command::new("cloudflared");
-        cmd.args(["tunnel", "--url", &target_url, "--no-autoupdate"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        // Find cloudflared in PATH or common directories
+        let possible_paths = [
+            "cloudflared",
+            "cloudflared.exe",
+            "./cloudflared.exe",
+            "./cloudflared",
+            "C:\\Windows\\System32\\cloudflared.exe",
+            "C:\\Program Files\\cloudflared\\cloudflared.exe",
+            "/usr/local/bin/cloudflared",
+            "/opt/homebrew/bin/cloudflared",
+        ];
 
-        #[cfg(target_os = "windows")]
-        {
-            // CREATE_NO_WINDOW flag for background execution on Windows
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
+        let mut child_proc: Option<Child> = None;
+        let mut last_err = String::new();
+
+        for bin_path in possible_paths {
+            let mut cmd = Command::new(bin_path);
+            cmd.args(["tunnel", "--url", &target_url, "--no-autoupdate"])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+
+            #[cfg(target_os = "windows")]
+            {
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
+                cmd.creation_flags(CREATE_NO_WINDOW);
+            }
+
+            match cmd.spawn() {
+                Ok(child) => {
+                    child_proc = Some(child);
+                    break;
+                }
+                Err(err) => {
+                    last_err = err.to_string();
+                }
+            }
         }
 
-        let mut child_proc = match cmd.spawn() {
-            Ok(child) => child,
-            Err(err) => {
+        let mut child_proc = match child_proc {
+            Some(c) => c,
+            Err(_) => {
                 return Err(format!(
-                    "Não foi possível iniciar o cloudflared: {}. Certifique-se de que o executável 'cloudflared' está instalado ou na pasta do app.",
-                    err
+                    "cloudflared não encontrado ({})",
+                    last_err
                 ));
             }
         };

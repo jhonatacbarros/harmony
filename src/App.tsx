@@ -64,14 +64,14 @@ export function App() {
 
       // 2. Start Cloudflare tunnel if enabled
       if (settings.enableCloudflare) {
-        const cfUrl = await tauriInvoke<string>('start_cloudflare_tunnel', {
-          port: settings.port,
-        });
-        if (cfUrl) {
-          setCloudflareUrl(cfUrl);
-        } else {
-          // Fallback demo URL if running outside Tauri
-          setCloudflareUrl('https://stream-demo.trycloudflare.com');
+        try {
+          const cfUrl = await tauriInvoke<string>('start_cloudflare_tunnel', {
+            port: settings.port,
+          });
+          setCloudflareUrl(cfUrl || null);
+        } catch (err) {
+          console.warn('Erro ao iniciar túnel do Cloudflare:', err);
+          setCloudflareUrl(null);
         }
       } else {
         setCloudflareUrl(null);
