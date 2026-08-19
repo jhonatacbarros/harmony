@@ -65,7 +65,7 @@ impl TunnelManager {
 
         let mut child_proc = match child_proc {
             Some(c) => c,
-            Err(_) => {
+            None => {
                 return Err(format!(
                     "cloudflared não encontrado ({})",
                     last_err
