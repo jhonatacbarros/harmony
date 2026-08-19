@@ -1,6 +1,5 @@
 use regex::Regex;
 use std::env;
-use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
