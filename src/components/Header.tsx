@@ -1,5 +1,5 @@
 import { useState, useEffect, type FC } from 'react';
-import { Activity, ShieldCheck, Sparkles, Clock } from 'lucide-react';
+import { ShieldCheck, Clock, Radio, Activity } from 'lucide-react';
 import { StreamStatus } from '../types';
 
 interface HeaderProps {
@@ -31,16 +31,13 @@ export const Header: FC<HeaderProps> = ({ status, viewerCount }) => {
   };
 
   return (
-    <header className="relative z-20 border-b border-white/[0.06] bg-surface-200/50 backdrop-blur-xl px-6 py-3.5 flex items-center justify-between">
+    <header className="relative z-20 border-b border-white/[0.06] bg-surface-200/60 backdrop-blur-xl px-6 py-3.5 flex items-center justify-between">
       {/* Brand & Logo */}
       <div className="flex items-center gap-3.5">
-        <div className="relative group">
-          <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-r from-indigo-500 via-cyan-400 to-violet-500 opacity-60 blur-xs transition duration-500 group-hover:opacity-100"></div>
-          <div className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-surface-300 border border-white/10 shadow-inner">
-            <span className="font-mono text-sm font-extrabold tracking-tight bg-gradient-to-tr from-indigo-300 via-cyan-200 to-white bg-clip-text text-transparent">
-              H
-            </span>
-          </div>
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-zinc-800 border border-white/[0.12] shadow-inner">
+          <span className="font-mono text-sm font-extrabold tracking-tight text-white">
+            H
+          </span>
         </div>
 
         <div>
@@ -48,12 +45,11 @@ export const Header: FC<HeaderProps> = ({ status, viewerCount }) => {
             <h1 className="text-sm font-semibold tracking-tight text-white font-mono">
               HARMONY
             </h1>
-            <span className="inline-flex items-center gap-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 text-[10px] font-medium text-indigo-300">
-              <Sparkles className="h-2.5 w-2.5" />
+            <span className="inline-flex items-center gap-1 rounded-full bg-white/[0.06] border border-white/[0.08] px-2 py-0.5 text-[10px] font-medium text-zinc-300 font-mono">
               STUDIO
             </span>
           </div>
-          <p className="text-[11px] text-slate-400/80">Low-Latency Desktop P2P Broadcaster</p>
+          <p className="text-[11px] text-zinc-400">Low-Latency Desktop P2P Broadcaster</p>
         </div>
       </div>
 
@@ -61,8 +57,8 @@ export const Header: FC<HeaderProps> = ({ status, viewerCount }) => {
       <div className="flex items-center gap-3">
         {/* Stream Timer */}
         {status === 'live' && (
-          <div className="hidden sm:flex items-center gap-1.5 rounded-lg bg-surface-100/70 border border-white/[0.06] px-2.5 py-1 text-xs font-mono text-slate-300">
-            <Clock className="h-3.5 w-3.5 text-indigo-400" />
+          <div className="hidden sm:flex items-center gap-1.5 rounded-lg bg-zinc-800/80 border border-white/[0.08] px-2.5 py-1 text-xs font-mono text-zinc-300">
+            <Clock className="h-3.5 w-3.5 text-zinc-400" />
             <span>{formatDuration(seconds)}</span>
           </div>
         )}
@@ -90,15 +86,15 @@ export const Header: FC<HeaderProps> = ({ status, viewerCount }) => {
         )}
 
         {status === 'idle' && (
-          <div className="flex items-center gap-2 rounded-full bg-surface-100/60 border border-white/[0.08] px-3 py-1 text-xs font-medium text-slate-400">
-            <ShieldCheck className="h-3.5 w-3.5 text-slate-400" />
+          <div className="flex items-center gap-2 rounded-full bg-zinc-800/50 border border-white/[0.08] px-3 py-1 text-xs font-medium text-zinc-400">
+            <ShieldCheck className="h-3.5 w-3.5 text-zinc-400" />
             <span className="text-[11px] tracking-wide uppercase">Pronto para Iniciar</span>
           </div>
         )}
 
         {status === 'starting' && (
-          <div className="flex items-center gap-2 rounded-full bg-indigo-500/10 border border-indigo-500/30 px-3 py-1 text-xs font-medium text-indigo-300">
-            <Activity className="h-3.5 w-3.5 animate-spin text-indigo-400" />
+          <div className="flex items-center gap-2 rounded-full bg-zinc-800 border border-white/[0.12] px-3 py-1 text-xs font-medium text-zinc-200">
+            <Activity className="h-3.5 w-3.5 animate-spin text-zinc-400" />
             <span className="text-[11px]">Iniciando...</span>
           </div>
         )}

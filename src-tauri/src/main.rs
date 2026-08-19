@@ -47,6 +47,12 @@ async fn start_cloudflare_tunnel(
 }
 
 #[tauri::command]
+async fn get_cloudflare_url(state: State<'_, AppStateWrapper>) -> Result<Option<String>, String> {
+    let guard = state.tunnel.current_url.lock().await;
+    Ok(guard.clone())
+}
+
+#[tauri::command]
 async fn stop_cloudflare_tunnel(state: State<'_, AppStateWrapper>) -> Result<(), String> {
     state.tunnel.stop().await;
     Ok(())
@@ -66,6 +72,7 @@ fn main() {
             start_stream_server,
             stop_stream_server,
             start_cloudflare_tunnel,
+            get_cloudflare_url,
             stop_cloudflare_tunnel
         ])
         .run(tauri::generate_context!())

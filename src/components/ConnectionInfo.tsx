@@ -1,5 +1,5 @@
 import { useState, type FC } from 'react';
-import { Copy, Check, Globe, Network, Users, Key, Radio, Info } from 'lucide-react';
+import { Copy, Check, Globe, Network, Users, Key, Radio, Info, Loader2 } from 'lucide-react';
 import { StreamStatus } from '../types';
 
 interface ConnectionInfoProps {
@@ -30,20 +30,20 @@ export const ConnectionInfo: FC<ConnectionInfoProps> = ({
   if (!isStreaming) return null;
 
   return (
-    <div className="rounded-2xl glass-panel p-5 space-y-4 border border-indigo-500/20 shadow-glow-brand/20">
+    <div className="rounded-2xl glass-panel p-5 space-y-4 border border-white/[0.08] shadow-2xl">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-white/[0.06] pb-3">
         <div className="flex items-center gap-2">
-          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-indigo-500/20 text-indigo-400">
-            <Radio className="h-3.5 w-3.5 animate-pulse" />
+          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-zinc-800 text-zinc-300">
+            <Radio className="h-3.5 w-3.5 animate-pulse text-zinc-300" />
           </div>
-          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-200">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200">
             Links de Transmissão para Amigos
           </h3>
         </div>
 
-        <div className="flex items-center gap-1.5 rounded-full bg-surface-300 border border-white/[0.08] px-2.5 py-1 text-xs font-medium text-slate-300">
-          <Users className="h-3 w-3 text-indigo-400" />
+        <div className="flex items-center gap-1.5 rounded-full bg-surface-300 border border-white/[0.08] px-2.5 py-1 text-xs font-medium text-zinc-300">
+          <Users className="h-3 w-3 text-zinc-400" />
           <span>{viewerCount} conectados</span>
         </div>
       </div>
@@ -72,11 +72,11 @@ export const ConnectionInfo: FC<ConnectionInfoProps> = ({
               <button
                 type="button"
                 onClick={() => copyToClipboard(cloudflareUrl, 'cf')}
-                className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-2 text-xs font-semibold text-white shadow-glow-emerald hover:from-emerald-500 hover:to-teal-500 transition-all shrink-0 active:scale-95"
+                className="flex items-center gap-1.5 rounded-xl bg-zinc-200 hover:bg-white text-zinc-950 px-4 py-2 text-xs font-bold transition-all shrink-0 active:scale-95 shadow-md"
               >
                 {copiedType === 'cf' ? (
                   <>
-                    <Check className="h-3.5 w-3.5 text-white" />
+                    <Check className="h-3.5 w-3.5 text-emerald-600" />
                     <span>Copiado!</span>
                   </>
                 ) : (
@@ -89,12 +89,12 @@ export const ConnectionInfo: FC<ConnectionInfoProps> = ({
             </div>
           </div>
         ) : (
-          <div className="flex items-start gap-2.5 rounded-xl bg-surface-300/60 p-3 border border-white/[0.05] text-xs text-slate-400">
-            <Info className="h-4 w-4 text-indigo-400 shrink-0 mt-0.5" />
+          <div className="flex items-center gap-2.5 rounded-xl bg-zinc-800/60 p-3 border border-white/[0.08] text-xs text-zinc-300 animate-pulse">
+            <Loader2 className="h-4 w-4 text-zinc-400 animate-spin shrink-0" />
             <div className="space-y-0.5">
-              <span className="font-semibold text-slate-300 block">Túnel Cloudflare não ativo</span>
-              <span className="text-[11px] text-slate-500 leading-relaxed">
-                A transmissão está disponível na sua rede local. Para link global, certifique-se de que o <code className="text-slate-300 font-mono">cloudflared</code> está instalado.
+              <span className="font-semibold block text-zinc-200">Gerando link do Cloudflare Tunnel...</span>
+              <span className="text-[11px] text-zinc-400">
+                Aguardando os servidores da Cloudflare atribuírem o domínio público.
               </span>
             </div>
           </div>
@@ -103,11 +103,11 @@ export const ConnectionInfo: FC<ConnectionInfoProps> = ({
         {/* Local Network Link */}
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-xs">
-            <span className="font-medium text-slate-300 flex items-center gap-1.5">
-              <Network className="h-3.5 w-3.5 text-indigo-400" />
+            <span className="font-medium text-zinc-300 flex items-center gap-1.5">
+              <Network className="h-3.5 w-3.5 text-zinc-400" />
               Link da Rede Local (Wi-Fi / LAN)
             </span>
-            <span className="text-[10px] text-slate-500 font-mono">Mesmo Roteador</span>
+            <span className="text-[10px] text-zinc-500 font-mono">Mesmo Roteador</span>
           </div>
 
           <div className="flex items-center gap-2">
@@ -115,21 +115,21 @@ export const ConnectionInfo: FC<ConnectionInfoProps> = ({
               type="text"
               readOnly
               value={localUrl}
-              className="w-full rounded-xl glass-input px-3.5 py-2 text-xs font-mono text-slate-300 select-all focus:outline-none"
+              className="w-full rounded-xl glass-input px-3.5 py-2 text-xs font-mono text-zinc-300 select-all focus:outline-none"
             />
             <button
               type="button"
               onClick={() => copyToClipboard(localUrl, 'local')}
-              className="flex items-center gap-1.5 rounded-xl bg-surface-100 hover:bg-surface-50 border border-white/[0.08] px-4 py-2 text-xs font-semibold text-slate-200 transition-all shrink-0 active:scale-95"
+              className="flex items-center gap-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-white/[0.08] px-4 py-2 text-xs font-semibold text-zinc-200 transition-all shrink-0 active:scale-95"
             >
               {copiedType === 'local' ? (
                 <>
-                  <Check className="h-3.5 w-3.5 text-indigo-400" />
+                  <Check className="h-3.5 w-3.5 text-emerald-400" />
                   <span>Copiado!</span>
                 </>
               ) : (
                 <>
-                  <Copy className="h-3.5 w-3.5 text-slate-400" />
+                  <Copy className="h-3.5 w-3.5 text-zinc-400" />
                   <span>Copiar</span>
                 </>
               )}

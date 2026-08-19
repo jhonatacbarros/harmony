@@ -63,22 +63,32 @@ export function App() {
         pin: settings.pin || null,
       });
 
-      // 2. Start Cloudflare tunnel if enabled
+      // 2. Start Cloudflare tunnel if enabled (non-blocking)
       if (settings.enableCloudflare) {
-        try {
-          const cfUrl = await tauriInvoke<string>('start_cloudflare_tunnel', {
-            port: settings.port,
-          });
-          setCloudflareUrl(cfUrl || null);
-        } catch (err) {
+        tauriInvoke<string>('start_cloudflare_tunnel', {
+          port: settings.port,
+        }).then((cfUrl) => {
+          if (cfUrl) setCloudflareUrl(cfUrl);
+        }).catch((err) => {
           console.warn('Erro ao iniciar túnel do Cloudflare:', err);
-          setCloudflareUrl(null);
-        }
+        });
+
+        // Polling fallback to check if URL appears
+        const interval = setInterval(async () => {
+          const url = await tauriInvoke<string>('get_cloudflare_url');
+          if (url) {
+            setCloudflareUrl(url);
+            clearInterval(interval);
+          }
+        }, 1500);
+
+        // Stop polling after 25s
+        setTimeout(() => clearInterval(interval), 25000);
       } else {
         setCloudflareUrl(null);
       }
 
-      // 3. Start local WebRTC screen/audio capture
+      // 3. Start local WebRTC screen/audio capture immediately
       await startStream();
     } catch (err) {
       console.error('Error initiating stream session:', err);
@@ -95,8 +105,8 @@ export function App() {
   const localViewerUrl = `http://${localIp}:${settings.port}`;
 
   return (
-    <div className="relative min-h-screen bg-background text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
-      {/* Top Ambient Glow Spotlight */}
+    <div className="relative min-h-screen bg-background text-zinc-100 flex flex-col font-sans selection:bg-zinc-700 selection:text-white">
+      {/* Top Ambient Subtle Lighting */}
       <div className="ambient-glow"></div>
 
       <Header status={status} viewerCount={viewerCount} />
@@ -137,16 +147,16 @@ export function App() {
           />
 
           {/* Dica para Jogos */}
-          <div className="rounded-2xl glass-panel-subtle p-4 text-xs text-slate-400 space-y-2 border border-white/[0.06]">
-            <div className="flex items-center gap-2 text-slate-200 font-semibold">
-              <Gamepad2 className="h-4 w-4 text-cyan-400" />
+          <div className="rounded-2xl glass-panel-subtle p-4 text-xs text-zinc-400 space-y-2 border border-white/[0.06]">
+            <div className="flex items-center gap-2 text-zinc-200 font-semibold">
+              <Gamepad2 className="h-4 w-4 text-zinc-400" />
               <span>Dica para Transmissão de Jogos</span>
             </div>
-            <p className="leading-relaxed text-[11px] text-slate-400">
-              Para transmitir o áudio do jogo sem eco no Windows, selecione a aba <strong className="text-slate-200">"Tela Inteira"</strong> no pop-up de captura e marque a caixinha <strong className="text-indigo-300">"Compartilhar áudio do sistema"</strong>.
+            <p className="leading-relaxed text-[11px] text-zinc-400">
+              Para transmitir o áudio do jogo sem capturar a voz dos amigos no Discord, escolha a aba <strong className="text-zinc-200">"Janela"</strong> no pop-up de captura e selecione a janela do seu jogo.
             </p>
-            <div className="pt-1 flex items-center gap-1.5 text-[10px] text-slate-500 font-mono">
-              <HelpCircle className="h-3 w-3 text-slate-600" />
+            <div className="pt-1 flex items-center gap-1.5 text-[10px] text-zinc-500 font-mono">
+              <HelpCircle className="h-3 w-3 text-zinc-600" />
               <span>Latência estimada: &lt; 120ms (P2P Direto)</span>
             </div>
           </div>

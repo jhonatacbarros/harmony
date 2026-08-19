@@ -38,25 +38,19 @@ export const StreamControls: FC<StreamControlsProps> = ({
             type="button"
             disabled={isStarting}
             onClick={onStart}
-            className="w-full relative group overflow-hidden rounded-xl p-px font-semibold text-white shadow-glow-brand transition-all duration-300 active:scale-[0.99] disabled:opacity-50"
+            className="w-full relative group overflow-hidden rounded-xl bg-zinc-100 hover:bg-white text-zinc-950 font-semibold shadow-lg shadow-white/10 transition-all duration-200 active:scale-[0.99] disabled:opacity-50 py-3.5 px-6 flex items-center justify-center gap-2.5"
           >
-            {/* Ambient radiant border glow */}
-            <span className="absolute inset-0 bg-gradient-to-r from-indigo-500 via-cyan-400 to-violet-500 group-hover:opacity-100 transition-opacity duration-300"></span>
-
-            {/* Inner button surface */}
-            <span className="relative flex items-center justify-center gap-2.5 rounded-[11px] bg-gradient-to-r from-indigo-600 via-indigo-700 to-violet-700 px-6 py-3.5 text-sm font-medium transition-all group-hover:bg-opacity-90">
-              {isStarting ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin text-indigo-200" />
-                  <span className="tracking-wide">Iniciando Transmissão de Tela...</span>
-                </>
-              ) : (
-                <>
-                  <Play className="h-4 w-4 fill-white text-white" />
-                  <span className="tracking-wide font-semibold">Iniciar Transmissão de Tela</span>
-                </>
-              )}
-            </span>
+            {isStarting ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin text-zinc-900" />
+                <span className="tracking-wide text-sm font-bold">Iniciando Transmissão de Tela...</span>
+              </>
+            ) : (
+              <>
+                <Play className="h-4 w-4 fill-zinc-950 text-zinc-950" />
+                <span className="tracking-wide text-sm font-bold">Iniciar Transmissão de Tela</span>
+              </>
+            )}
           </button>
         ) : (
           <div className="flex items-center gap-3">
@@ -67,7 +61,7 @@ export const StreamControls: FC<StreamControlsProps> = ({
               className={`flex-1 flex items-center justify-center gap-2 rounded-xl py-3.5 px-4 text-xs font-semibold uppercase tracking-wider transition-all duration-200 border shadow-lg ${
                 status === 'paused'
                   ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 shadow-glow-emerald'
-                  : 'border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 shadow-amber-500/10'
+                  : 'border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20'
               }`}
             >
               {status === 'paused' ? (
