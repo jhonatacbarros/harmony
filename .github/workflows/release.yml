@@ -1,0 +1,58 @@
+name: Release Windows App
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Rust Stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install Frontend Dependencies
+        run: npm install
+
+      - name: Build Tauri Windows App (.exe / .msi)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Harmony ${{ github.ref_name }}'
+          releaseBody: |
+            ## 🚀 Harmony Desktop Streamer - Windows Release
+
+            ### Novidades nesta versão:
+            - Transmissão WebRTC P2P de baixa latência (< 150ms).
+            - Suporte a 720p / 1080p a 60 FPS com áudio do sistema/jogo.
+            - Túnel automático com Cloudflare Tunnel.
+            - Proteção por PIN de acesso para a live.
+
+            ### Como Usar:
+            1. Baixe o instalador `.msi` ou o executável `.exe` abaixo.
+            2. Execute no Windows e clique em "Iniciar Transmissão de Tela".
+            3. Compartilhe o link gerado com seus amigos!
+          releaseDraft: false
+          prerelease: false
