@@ -4,8 +4,8 @@
 
 **Transmissão de tela e áudio em tempo real (720p/1080p 60 FPS) para amigos via WebRTC P2P e Cloudflare Tunnel.**
 
-[![Release](https://img.shields.io/github/v/release/jhonatacarvalho/harmony?color=indigo&label=Release)](https://github.com/jhonatacarvalho/harmony/releases)
-[![Platform](https://img.shields.io/badge/Platform-Windows-blue.svg)](https://github.com/jhonatacarvalho/harmony)
+[![Release](https://img.shields.io/github/v/release/jhonatacbarros/harmony?color=indigo&label=Release)](https://github.com/jhonatacbarros/harmony/releases)
+[![Platform](https://img.shields.io/badge/Platform-Windows-blue.svg)](https://github.com/jhonatacbarros/harmony)
 [![Built with Tauri](https://img.shields.io/badge/Built%20with-Tauri%20v2-24C8D8.svg)](https://tauri.app/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -37,7 +37,7 @@ Seus amigos não precisam criar conta nem instalar nenhum aplicativo: **eles ape
 
 ## 📥 Download
 
-Você pode baixar a versão mais recente pronta para Windows (`.exe` ou `.msi`) na página de **[Releases](https://github.com/jhonatacarvalho/harmony/releases)**.
+Você pode baixar a versão mais recente pronta para Windows (`.exe` ou `.msi`) na página de **[Releases](https://github.com/jhonatacbarros/harmony/releases)**.
 
 ---
 
@@ -85,7 +85,7 @@ Se você deseja compilar ou modificar o código-fonte:
 
 ```bash
 # 1. Clone o repositório
-git clone https://github.com/jhonatacarvalho/harmony.git
+git clone https://github.com/jhonatacbarros/harmony.git
 cd harmony
 
 # 2. Instale as dependências
