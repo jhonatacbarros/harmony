@@ -31,7 +31,7 @@ pub fn get_running_app_processes() -> Vec<AppProcess> {
     let mut processes = Vec::new();
 
     for (pid, process) in sys.processes() {
-        let name = process.name().to_string();
+        let name = process.name().to_string_lossy().to_string();
         let name_lower = name.to_lowercase();
 
         // Skip ignored background processes
