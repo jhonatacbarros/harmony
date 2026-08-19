@@ -6,11 +6,11 @@ import { StreamControls } from './components/StreamControls';
 import { ConnectionInfo } from './components/ConnectionInfo';
 import { useWebRTC } from './hooks/useWebRTC';
 import { StreamSettings } from './types';
+import { HelpCircle, Gamepad2 } from 'lucide-react';
 
 // Safe Tauri invoke helper
 async function tauriInvoke<T>(cmd: string, args?: any): Promise<T | null> {
   try {
-    // Dynamically check if running in Tauri environment
     if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
       const { invoke } = await import('@tauri-apps/api/core');
       return await invoke<T>(cmd, args);
@@ -94,13 +94,21 @@ export function App() {
   const localViewerUrl = `http://${localIp}:${settings.port}`;
 
   return (
-    <div className="min-h-screen bg-slate-950 flex flex-col font-sans">
+    <div className="relative min-h-screen bg-background text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
+      {/* Top Ambient Glow Spotlight */}
+      <div className="ambient-glow"></div>
+
       <Header status={status} viewerCount={viewerCount} />
 
-      <main className="flex-1 p-6 max-w-7xl mx-auto w-full grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Coluna Esquerda: Preview e Controles Principais */}
-        <div className="lg:col-span-7 space-y-6 flex flex-col">
-          <VideoPreview stream={stream} status={status} />
+      <main className="relative z-10 flex-1 p-6 max-w-7xl mx-auto w-full grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* Coluna Esquerda: Preview Studio e Controles */}
+        <div className="lg:col-span-7 space-y-5 flex flex-col">
+          <VideoPreview
+            stream={stream}
+            status={status}
+            quality={settings.quality}
+            fps={settings.fps}
+          />
 
           <StreamControls
             status={status}
@@ -119,22 +127,27 @@ export function App() {
           />
         </div>
 
-        {/* Coluna Direita: Painel de Configurações */}
-        <div className="lg:col-span-5 space-y-6">
+        {/* Coluna Direita: Painel de Configurações & Quick Tips */}
+        <div className="lg:col-span-5 space-y-5">
           <SettingsCard
             settings={settings}
             onChange={setSettings}
             status={status}
           />
 
-          {/* Dicas Rápidas de Transmissão */}
-          <div className="rounded-2xl border border-slate-800/80 bg-slate-900/30 p-4 text-xs text-slate-400 space-y-2">
-            <h4 className="font-semibold text-slate-300 flex items-center gap-1.5">
-              💡 Dica para Jogos
-            </h4>
-            <p>
-              Para transmitir o áudio do jogo no Windows, ao abrir o seletor de tela, escolha a aba <strong>"Tela Inteira"</strong> e certifique-se de marcar a caixinha <strong>"Compartilhar áudio do sistema"</strong>.
+          {/* Dica para Jogos */}
+          <div className="rounded-2xl glass-panel-subtle p-4 text-xs text-slate-400 space-y-2 border border-white/[0.06]">
+            <div className="flex items-center gap-2 text-slate-200 font-semibold">
+              <Gamepad2 className="h-4 w-4 text-cyan-400" />
+              <span>Dica para Transmissão de Jogos</span>
+            </div>
+            <p className="leading-relaxed text-[11px] text-slate-400">
+              Para transmitir o áudio do jogo sem eco no Windows, selecione a aba <strong className="text-slate-200">"Tela Inteira"</strong> no pop-up de captura e marque a caixinha <strong className="text-indigo-300">"Compartilhar áudio do sistema"</strong>.
             </p>
+            <div className="pt-1 flex items-center gap-1.5 text-[10px] text-slate-500 font-mono">
+              <HelpCircle className="h-3 w-3 text-slate-600" />
+              <span>Latência estimada: &lt; 120ms (P2P Direto)</span>
+            </div>
           </div>
         </div>
       </main>

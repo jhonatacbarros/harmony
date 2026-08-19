@@ -3,42 +3,63 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Harmony - Assistir Live</title>
+  <title>Harmony Live - Assistir Transmissão</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     body {
-      background-color: #030712;
-      color: #f3f4f6;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background-color: #06070b;
+      color: #f1f5f9;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', Oxygen, Ubuntu, Cantarell, sans-serif;
     }
-    /* Animação suave para controles */
-    .controls-fade {
-      transition: opacity 0.3s ease-in-out;
+    .glass-ui {
+      background: rgba(15, 18, 28, 0.7);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.7);
+    }
+    .ambient-bg {
+      position: fixed;
+      top: -200px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 800px;
+      height: 400px;
+      background: radial-gradient(circle, rgba(99, 102, 241, 0.12) 0%, rgba(6, 182, 212, 0.04) 50%, rgba(0,0,0,0) 70%);
+      filter: blur(80px);
+      pointer-events: none;
+      z-index: 0;
+    }
+    .eq-bar { animation: eq 1s ease-in-out infinite alternate; }
+    @keyframes eq {
+      0% { height: 20%; }
+      100% { height: 90%; }
     }
   </style>
 </head>
-<body class="h-screen w-screen overflow-hidden flex flex-col justify-between select-none">
+<body class="h-screen w-screen overflow-hidden flex flex-col justify-between select-none relative bg-[#06070b]">
+  <div class="ambient-bg"></div>
 
-  <!-- Top Bar -->
-  <header id="topBar" class="absolute top-0 left-0 right-0 z-30 flex items-center justify-between p-4 bg-gradient-to-b from-black/80 to-transparent transition-opacity duration-300">
+  <!-- Top Glass Header -->
+  <header id="topBar" class="relative z-30 flex items-center justify-between p-4 bg-gradient-to-b from-black/80 via-black/40 to-transparent transition-opacity duration-300">
     <div class="flex items-center gap-3">
-      <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 font-bold text-white shadow-md">
+      <div class="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-cyan-400 font-bold text-white shadow-lg shadow-indigo-600/30 text-xs font-mono">
         H
       </div>
       <div>
-        <h1 class="text-sm font-bold text-white">Harmony Live</h1>
-        <p class="text-[10px] text-slate-400">Transmissão em Tempo Real</p>
+        <h1 class="text-xs font-bold tracking-wider text-white uppercase font-mono">Harmony Studio</h1>
+        <p class="text-[10px] text-slate-400">Transmissão em Tempo Real • P2P WebRTC</p>
       </div>
     </div>
 
-    <!-- Status Badges -->
-    <div class="flex items-center gap-2">
-      <div id="statusBadge" class="flex items-center gap-1.5 rounded-full bg-slate-800/80 border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-300 backdrop-blur-md">
+    <!-- Status & Fullscreen Actions -->
+    <div class="flex items-center gap-2.5">
+      <div id="statusBadge" class="flex items-center gap-2 rounded-full bg-slate-900/80 border border-white/10 px-3.5 py-1 text-xs font-medium text-slate-300 backdrop-blur-xl">
         <span id="statusDot" class="h-2 w-2 rounded-full bg-slate-500"></span>
-        <span id="statusText">Conectando...</span>
+        <span id="statusText" class="font-mono text-[11px]">Conectando...</span>
       </div>
 
-      <button id="fullscreenBtn" class="flex items-center justify-center p-2 rounded-lg bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-white backdrop-blur-md transition-colors" title="Tela Cheia">
+      <button id="fullscreenBtn" class="p-2 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-white/10 text-slate-200 backdrop-blur-xl transition-all active:scale-95" title="Tela Cheia">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
         </svg>
@@ -46,8 +67,8 @@
     </div>
   </header>
 
-  <!-- Video Container -->
-  <main id="videoContainer" class="relative flex-1 flex items-center justify-center bg-black">
+  <!-- Video Main Stage -->
+  <main id="videoContainer" class="relative flex-1 flex items-center justify-center bg-black overflow-hidden group">
     <video
       id="remoteVideo"
       autoplay
@@ -55,52 +76,82 @@
       class="max-w-full max-h-full w-full h-full object-contain"
     ></video>
 
-    <!-- Overlay: Click to Unmute Audio -->
+    <!-- Floating Audio Unlock Banner -->
     <div id="unmuteOverlay" class="absolute inset-0 bg-black/60 backdrop-blur-xs flex flex-col items-center justify-center z-20 cursor-pointer hidden">
-      <div class="p-4 rounded-full bg-indigo-600/90 text-white shadow-2xl animate-bounce mb-3">
-        <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div class="p-4 rounded-2xl bg-indigo-600/90 text-white shadow-2xl shadow-indigo-600/50 mb-3 animate-pulse">
+        <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
         </svg>
       </div>
-      <p class="text-sm font-semibold text-white">Clique para Ativar o Áudio</p>
-      <p class="text-xs text-slate-400 mt-1">O navegador bloqueia o som automático</p>
+      <p class="text-sm font-semibold text-white">Clique em qualquer lugar para ativar o som</p>
+      <p class="text-xs text-slate-400 mt-1">O áudio foi pausado pelas políticas de reprodução do navegador</p>
     </div>
 
-    <!-- Overlay: Stream Paused -->
-    <div id="pausedOverlay" class="absolute inset-0 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center z-10 hidden">
-      <div class="text-amber-400 mb-3 animate-pulse">
-        <svg class="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <!-- Overlay: Stream Paused State -->
+    <div id="pausedOverlay" class="absolute inset-0 bg-black/80 backdrop-blur-md flex flex-col items-center justify-center z-10 hidden">
+      <div class="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400 mb-3 animate-pulse">
+        <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
       </div>
-      <h2 class="text-lg font-bold text-white uppercase tracking-wider">Transmissão Pausada</h2>
+      <h2 class="text-sm font-bold text-white uppercase tracking-widest font-mono">Transmissão em Pausa</h2>
       <p class="text-xs text-slate-400 mt-1">O streamer pausou o vídeo momentaneamente.</p>
     </div>
 
-    <!-- Overlay: PIN Request Modal -->
-    <div id="pinModal" class="absolute inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-40 hidden">
-      <div class="w-full max-w-sm p-6 rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl text-center">
-        <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-600/20 text-indigo-400 mb-4 border border-indigo-500/30">
+    <!-- Floating Bottom Control Bar (Shows on Hover) -->
+    <div id="bottomControls" class="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-300 glass-ui rounded-2xl px-5 py-2.5 flex items-center gap-4">
+      {/* Volume Slider */}
+      <div class="flex items-center gap-2">
+        <button id="muteBtn" class="text-slate-300 hover:text-white transition-colors">
+          <svg id="volumeIcon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+          </svg>
+        </button>
+        <input
+          type="range"
+          id="volumeSlider"
+          min="0"
+          max="1"
+          step="0.05"
+          value="1"
+          class="w-20 accent-indigo-500 h-1 bg-slate-700 rounded-lg cursor-pointer"
+        />
+      </div>
+
+      <div class="h-4 w-px bg-white/10"></div>
+
+      <!-- Realtime Equalizer Mini -->
+      <div class="flex items-end gap-0.5 h-3">
+        <div class="w-0.5 bg-indigo-400 rounded-xs eq-bar" style="animation-delay: 0.1s"></div>
+        <div class="w-0.5 bg-cyan-400 rounded-xs eq-bar" style="animation-delay: 0.3s"></div>
+        <div class="w-0.5 bg-indigo-300 rounded-xs eq-bar" style="animation-delay: 0.2s"></div>
+      </div>
+    </div>
+
+    <!-- PIN Authentication Modal -->
+    <div id="pinModal" class="absolute inset-0 bg-black/90 backdrop-blur-xl flex items-center justify-center z-40 hidden">
+      <div class="w-full max-w-sm p-6 rounded-3xl glass-ui text-center border border-white/10 shadow-2xl">
+        <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-500/10 text-indigo-400 mb-4 border border-indigo-500/20">
           <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
           </svg>
         </div>
-        <h3 class="text-base font-bold text-white mb-1">Transmissão Protegida</h3>
+        <h3 class="text-sm font-bold text-white mb-1">Transmissão Protegida</h3>
         <p class="text-xs text-slate-400 mb-4">Insira o PIN fornecido pelo streamer para assistir.</p>
         
         <input
           type="password"
           id="pinInput"
           placeholder="Digite o PIN"
-          class="w-full text-center tracking-widest text-lg font-mono rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-white focus:border-indigo-500 focus:outline-none mb-3"
+          class="w-full text-center tracking-widest text-lg font-mono rounded-xl border border-white/10 bg-black/50 px-4 py-2.5 text-white focus:border-indigo-500 focus:outline-none mb-3"
         />
-        <p id="pinError" class="text-xs text-red-400 mb-3 hidden">PIN incorreto. Tente novamente.</p>
+        <p id="pinError" class="text-xs text-rose-400 mb-3 hidden">PIN incorreto. Tente novamente.</p>
 
         <button
           id="submitPinBtn"
-          class="w-full rounded-xl bg-indigo-600 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500 shadow-lg shadow-indigo-600/30 transition-all"
+          class="w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 py-2.5 text-xs font-semibold text-white hover:from-indigo-500 hover:to-violet-500 shadow-lg shadow-indigo-600/30 transition-all active:scale-98"
         >
-          Entrar na Live
+          Entrar na Transmissão
         </button>
       </div>
     </div>
@@ -127,6 +178,8 @@
     const pinError = document.getElementById('pinError');
     const submitPinBtn = document.getElementById('submitPinBtn');
     const fullscreenBtn = document.getElementById('fullscreenBtn');
+    const volumeSlider = document.getElementById('volumeSlider');
+    const muteBtn = document.getElementById('muteBtn');
 
     let pc = null;
     let ws = null;
@@ -136,14 +189,14 @@
     function updateStatus(state, message) {
       statusText.innerText = message;
       if (state === 'live') {
-        statusDot.className = 'h-2 w-2 rounded-full bg-red-500 animate-ping';
-        statusBadge.className = 'flex items-center gap-1.5 rounded-full bg-red-500/10 border border-red-500/30 px-3 py-1 text-xs font-semibold text-red-400 backdrop-blur-md';
+        statusDot.className = 'h-2 w-2 rounded-full bg-rose-500 animate-ping';
+        statusBadge.className = 'flex items-center gap-2 rounded-full bg-rose-500/10 border border-rose-500/30 px-3.5 py-1 text-xs font-semibold text-rose-400 backdrop-blur-xl shadow-lg shadow-rose-500/20';
       } else if (state === 'paused') {
         statusDot.className = 'h-2 w-2 rounded-full bg-amber-400';
-        statusBadge.className = 'flex items-center gap-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 px-3 py-1 text-xs font-semibold text-amber-400 backdrop-blur-md';
+        statusBadge.className = 'flex items-center gap-2 rounded-full bg-amber-500/10 border border-amber-500/30 px-3.5 py-1 text-xs font-semibold text-amber-400 backdrop-blur-xl';
       } else {
         statusDot.className = 'h-2 w-2 rounded-full bg-slate-500';
-        statusBadge.className = 'flex items-center gap-1.5 rounded-full bg-slate-800/80 border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-300 backdrop-blur-md';
+        statusBadge.className = 'flex items-center gap-2 rounded-full bg-slate-900/80 border border-white/10 px-3.5 py-1 text-xs font-semibold text-slate-300 backdrop-blur-xl';
       }
     }
 
@@ -155,9 +208,7 @@
           remoteVideo.srcObject = event.streams[0];
           updateStatus('live', 'AO VIVO');
 
-          // Attempt autoplay with audio
           remoteVideo.play().catch(() => {
-            // Autoplay blocked by browser policy: show unmute overlay
             unmuteOverlay.classList.remove('hidden');
           });
         }
@@ -230,11 +281,21 @@
 
       ws.onclose = () => {
         updateStatus('closed', 'Desconectado');
-        setTimeout(connectWebSocket, 3000); // Tenta reconectar após 3s
+        setTimeout(connectWebSocket, 3000);
       };
     }
 
-    // Submit PIN
+    // Volume Slider
+    volumeSlider.addEventListener('input', (e) => {
+      remoteVideo.volume = e.target.value;
+      remoteVideo.muted = e.target.value === '0';
+    });
+
+    muteBtn.addEventListener('click', () => {
+      remoteVideo.muted = !remoteVideo.muted;
+      volumeSlider.value = remoteVideo.muted ? 0 : remoteVideo.volume || 1;
+    });
+
     submitPinBtn.addEventListener('click', () => {
       enteredPin = pinInput.value.trim();
       pinModal.classList.add('hidden');
@@ -242,23 +303,20 @@
       connectWebSocket();
     });
 
-    // Unmute overlay click
     unmuteOverlay.addEventListener('click', () => {
       remoteVideo.muted = false;
       remoteVideo.play();
       unmuteOverlay.classList.add('hidden');
     });
 
-    // Fullscreen Toggle
     fullscreenBtn.addEventListener('click', () => {
       if (!document.fullscreenElement) {
-        document.documentElement.requestFullscreen();
+        document.documentElement.requestFullscreen().catch(() => {});
       } else {
-        document.exitFullscreen();
+        document.exitFullscreen().catch(() => {});
       }
     });
 
-    // Start connection
     connectWebSocket();
   </script>
 </body>
