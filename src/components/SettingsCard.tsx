@@ -1,6 +1,6 @@
-import { useState, type FC } from 'react';
-import { Sliders, Volume2, Mic, Lock, Globe, Server, Cpu, Zap, VolumeX, HelpCircle } from 'lucide-react';
-import { StreamSettings, StreamStatus } from '../types';
+import { useState, useEffect, type FC } from 'react';
+import { Sliders, Volume2, Mic, Lock, Globe, Server, Cpu, Zap, VolumeX, HelpCircle, RefreshCw, Gamepad2 } from 'lucide-react';
+import { StreamSettings, StreamStatus, AppProcess } from '../types';
 import { DiscordAudioGuide } from './DiscordAudioGuide';
 
 interface SettingsCardProps {
@@ -9,12 +9,27 @@ interface SettingsCardProps {
   status: StreamStatus;
 }
 
+// Safe Tauri invoke helper
+async function tauriInvoke<T>(cmd: string, args?: any): Promise<T | null> {
+  try {
+    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      return await invoke<T>(cmd, args);
+    }
+  } catch (err) {
+    console.warn(`Tauri command '${cmd}' could not be executed:`, err);
+  }
+  return null;
+}
+
 export const SettingsCard: FC<SettingsCardProps> = ({
   settings,
   onChange,
   status,
 }) => {
   const [isGuideOpen, setIsGuideOpen] = useState(false);
+  const [processes, setProcesses] = useState<AppProcess[]>([]);
+  const [isLoadingProcesses, setIsLoadingProcesses] = useState(false);
   const isStreaming = status === 'live' || status === 'paused';
 
   const updateSetting = <K extends keyof StreamSettings>(
@@ -23,6 +38,19 @@ export const SettingsCard: FC<SettingsCardProps> = ({
   ) => {
     onChange({ ...settings, [key]: value });
   };
+
+  const fetchProcesses = async () => {
+    setIsLoadingProcesses(true);
+    const list = await tauriInvoke<AppProcess[]>('get_running_processes');
+    if (list && list.length > 0) {
+      setProcesses(list);
+    }
+    setIsLoadingProcesses(false);
+  };
+
+  useEffect(() => {
+    fetchProcesses();
+  }, []);
 
   return (
     <div className="rounded-2xl glass-panel p-5 space-y-5 border border-white/[0.08] shadow-2xl">
@@ -42,6 +70,49 @@ export const SettingsCard: FC<SettingsCardProps> = ({
       </div>
 
       <div className="space-y-4">
+        {/* Process Selection (OBS-style target application capture) */}
+        <div>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="text-xs font-medium text-zinc-300 flex items-center gap-1.5">
+              <Gamepad2 className="h-3.5 w-3.5 text-zinc-400" />
+              Jogo / Aplicativo Alvo
+            </label>
+            <button
+              type="button"
+              onClick={fetchProcesses}
+              disabled={isLoadingProcesses || isStreaming}
+              className="text-[10px] text-zinc-400 hover:text-white flex items-center gap-1 transition-colors disabled:opacity-50"
+              title="Atualizar lista de janelas e processos abertos"
+            >
+              <RefreshCw className={`h-2.5 w-2.5 ${isLoadingProcesses ? 'animate-spin' : ''}`} />
+              <span>Atualizar</span>
+            </button>
+          </div>
+
+          <div className="relative">
+            <select
+              disabled={isStreaming}
+              value={settings.targetProcessName || '__system__'}
+              onChange={(e) => updateSetting('targetProcessName', e.target.value === '__system__' ? undefined : e.target.value)}
+              className="w-full rounded-xl glass-input px-3.5 py-2.5 text-xs text-zinc-200 bg-surface-300 border border-white/[0.08] focus:outline-none focus:border-zinc-400 appearance-none cursor-pointer disabled:opacity-50"
+            >
+              <option value="__system__" className="bg-zinc-900 text-zinc-200">
+                🌐 Áudio Geral do Sistema (Padrão)
+              </option>
+              {processes.map((proc) => (
+                <option key={proc.pid} value={proc.name} className="bg-zinc-900 text-zinc-200">
+                  🎮 {proc.display_name} ({proc.name})
+                </option>
+              ))}
+            </select>
+            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-zinc-400">
+              <svg className="h-3.5 w-3.5 fill-current" viewBox="0 0 20 20">
+                <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" />
+              </svg>
+            </div>
+          </div>
+        </div>
+
         {/* Quality (Segmented Control) */}
         <div>
           <div className="flex items-center justify-between mb-1.5">
@@ -60,7 +131,7 @@ export const SettingsCard: FC<SettingsCardProps> = ({
                   key={q}
                   disabled={isStreaming}
                   onClick={() => updateSetting('quality', q)}
-                  className={`relative flex flex-col items-center justify-center py-2.5 px-3 rounded-lg text-xs transition-all duration-200 ${
+                  className={`relative flex flex-col items-center justify-center py-2 px-3 rounded-lg text-xs transition-all duration-200 ${
                     active
                       ? 'bg-zinc-200 text-zinc-950 font-bold shadow-md'
                       : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.03]'
@@ -108,10 +179,10 @@ export const SettingsCard: FC<SettingsCardProps> = ({
           </div>
         </div>
 
-        {/* Audio Toggles */}
-        <div className="space-y-2 pt-1">
+        {/* Audio Toggles & Sliders */}
+        <div className="space-y-3 pt-1">
           <label className="text-xs font-medium text-zinc-300 block">
-            Canais de Áudio
+            Canais e Mixagem de Áudio
           </label>
 
           <div className="grid grid-cols-2 gap-2">
@@ -130,7 +201,7 @@ export const SettingsCard: FC<SettingsCardProps> = ({
                 <Volume2 className={`h-4 w-4 ${settings.enableAudio ? 'text-zinc-200' : 'text-zinc-600'}`} />
                 <div>
                   <div className="text-xs font-semibold">Som do Jogo</div>
-                  <div className="text-[10px] text-zinc-500">Áudio do Sistema</div>
+                  <div className="text-[10px] text-zinc-500">Canal Principal</div>
                 </div>
               </div>
               <div
@@ -177,6 +248,51 @@ export const SettingsCard: FC<SettingsCardProps> = ({
               </div>
             </button>
           </div>
+
+          {/* Volume Sliders (Mixer) */}
+          {settings.enableAudio && (
+            <div className="space-y-2 rounded-xl bg-surface-300/80 p-3 border border-white/[0.05]">
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="text-zinc-400 flex items-center gap-1">
+                    <Volume2 className="h-3 w-3 text-zinc-400" />
+                    Volume do Jogo
+                  </span>
+                  <span className="font-mono text-zinc-200">{Math.round((settings.gameVolume ?? 1.0) * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="1.5"
+                  step="0.05"
+                  value={settings.gameVolume ?? 1.0}
+                  onChange={(e) => updateSetting('gameVolume', parseFloat(e.target.value))}
+                  className="w-full h-1.5 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-zinc-200"
+                />
+              </div>
+
+              {settings.enableMic && (
+                <div className="space-y-1 pt-1.5 border-t border-white/[0.04]">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-zinc-400 flex items-center gap-1">
+                      <Mic className="h-3 w-3 text-zinc-400" />
+                      Volume do Microfone
+                    </span>
+                    <span className="font-mono text-zinc-200">{Math.round((settings.micVolume ?? 1.0) * 100)}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1.5"
+                    step="0.05"
+                    value={settings.micVolume ?? 1.0}
+                    onChange={(e) => updateSetting('micVolume', parseFloat(e.target.value))}
+                    className="w-full h-1.5 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-zinc-200"
+                  />
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Modo Anti-Eco Discord */}
           <div

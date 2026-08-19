@@ -20,7 +20,25 @@ export function useWebRTC(settings: StreamSettings) {
   const peersRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const socketRef = useRef<WebSocket | null>(null);
 
-  // Stop all media tracks and peer connections
+  // Audio Graph Nodes for real-time volume mixing
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const gameGainRef = useRef<GainNode | null>(null);
+  const micGainRef = useRef<GainNode | null>(null);
+
+  // Dynamically update game audio and microphone volumes in real-time
+  useEffect(() => {
+    if (gameGainRef.current) {
+      gameGainRef.current.gain.value = settings.gameVolume ?? 1.0;
+    }
+  }, [settings.gameVolume]);
+
+  useEffect(() => {
+    if (micGainRef.current) {
+      micGainRef.current.gain.value = settings.micVolume ?? 1.0;
+    }
+  }, [settings.micVolume]);
+
+  // Stop all media tracks, audio nodes, and peer connections
   const cleanup = useCallback(() => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
@@ -33,6 +51,13 @@ export function useWebRTC(settings: StreamSettings) {
       socketRef.current.close();
       socketRef.current = null;
     }
+
+    if (audioCtxRef.current) {
+      audioCtxRef.current.close().catch(() => {});
+      audioCtxRef.current = null;
+    }
+    gameGainRef.current = null;
+    micGainRef.current = null;
 
     setStream(null);
     setViewerCount(0);
@@ -59,18 +84,11 @@ export function useWebRTC(settings: StreamSettings) {
           socketRef.current.send(
             JSON.stringify({
               type: 'candidate',
+              senderId: 'host',
               targetId: viewerId,
               payload: event.candidate,
             })
           );
-        }
-      };
-
-      pc.onconnectionstatechange = () => {
-        if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
-          pc.close();
-          peersRef.current.delete(viewerId);
-          setViewerCount(peersRef.current.size);
         }
       };
 
@@ -82,6 +100,7 @@ export function useWebRTC(settings: StreamSettings) {
         socketRef.current.send(
           JSON.stringify({
             type: 'answer',
+            senderId: 'host',
             targetId: viewerId,
             payload: answer,
           })
@@ -89,25 +108,32 @@ export function useWebRTC(settings: StreamSettings) {
       }
 
       setViewerCount(peersRef.current.size);
+
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+          peersRef.current.delete(viewerId);
+          setViewerCount(peersRef.current.size);
+        }
+      };
     } catch (err) {
       console.error(`Error handling offer from viewer ${viewerId}:`, err);
     }
   }, []);
 
-  // Connect to local Rust WebSocket signaling server
+  // Connect to the local signaling server
   const connectSignaling = useCallback((port: number, pin: string) => {
-    const wsUrl = `ws://localhost:${port}/ws/host?pin=${encodeURIComponent(pin)}`;
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(`ws://localhost:${port}/ws/host?pin=${encodeURIComponent(pin)}`);
     socketRef.current = ws;
 
     ws.onopen = () => {
-      console.log('Connected to local signaling server');
+      console.log('Host connected to signaling server');
       setStatus('live');
     };
 
     ws.onmessage = async (event) => {
       try {
         const msg = JSON.parse(event.data);
+
         if (msg.type === 'offer' && msg.senderId && msg.payload) {
           await handleViewerOffer(msg.senderId, msg.payload);
         } else if (msg.type === 'candidate' && msg.senderId && msg.payload) {
@@ -173,7 +199,26 @@ export function useWebRTC(settings: StreamSettings) {
 
       let finalStream = displayStream;
 
-      // If microphone is enabled, mix mic audio track
+      // Build WebAudio Mixing Graph with GainNodes for Game & Mic
+      const audioCtx = new AudioContext();
+      audioCtxRef.current = audioCtx;
+      const destination = audioCtx.createMediaStreamDestination();
+
+      let hasAudioTracks = false;
+
+      // 1. Connect Game Audio track with volume control
+      if (settings.enableAudio && displayStream.getAudioTracks().length > 0) {
+        const gameTrack = displayStream.getAudioTracks()[0];
+        const gameSource = audioCtx.createMediaStreamSource(new MediaStream([gameTrack]));
+        const gameGain = audioCtx.createGain();
+        gameGain.gain.value = settings.gameVolume ?? 1.0;
+        gameSource.connect(gameGain);
+        gameGain.connect(destination);
+        gameGainRef.current = gameGain;
+        hasAudioTracks = true;
+      }
+
+      // 2. Connect Microphone track with independent volume control
       if (settings.enableMic) {
         try {
           const micStream = await navigator.mediaDevices.getUserMedia({
@@ -182,25 +227,25 @@ export function useWebRTC(settings: StreamSettings) {
               noiseSuppression: true,
             },
           });
-          const audioCtx = new AudioContext();
-          const destination = audioCtx.createMediaStreamDestination();
+          const micSource = audioCtx.createMediaStreamSource(micStream);
+          const micGain = audioCtx.createGain();
+          micGain.gain.value = settings.micVolume ?? 1.0;
+          micSource.connect(micGain);
+          micGain.connect(destination);
+          micGainRef.current = micGain;
+          hasAudioTracks = true;
+        } catch (micErr) {
+          console.warn('Microphone permission denied or unavailable:', micErr);
+        }
+      }
 
-          if (displayStream.getAudioTracks().length > 0) {
-            const displayAudioSource = audioCtx.createMediaStreamSource(displayStream);
-            displayAudioSource.connect(destination);
-          }
-
-          const micAudioSource = audioCtx.createMediaStreamSource(micStream);
-          micAudioSource.connect(destination);
-
-          // Create combined stream
-          const mixedAudioTrack = destination.stream.getAudioTracks()[0];
+      if (hasAudioTracks) {
+        const mixedAudioTrack = destination.stream.getAudioTracks()[0];
+        if (mixedAudioTrack) {
           finalStream = new MediaStream([
             displayStream.getVideoTracks()[0],
             mixedAudioTrack,
           ]);
-        } catch (micErr) {
-          console.warn('Microphone permission denied or unavailable:', micErr);
         }
       }
 

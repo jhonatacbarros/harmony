@@ -1,10 +1,12 @@
 // Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod process_audio;
 mod server;
 mod tunnel;
 
 use local_ip_address::local_ip;
+use process_audio::{get_running_app_processes, AppProcess};
 use server::ServerManager;
 use std::sync::Arc;
 use tauri::State;
@@ -21,6 +23,11 @@ async fn get_local_ip() -> Result<String, String> {
         Ok(ip) => Ok(ip.to_string()),
         Err(e) => Ok(format!("localhost ({})", e)),
     }
+}
+
+#[tauri::command]
+async fn get_running_processes() -> Result<Vec<AppProcess>, String> {
+    Ok(get_running_app_processes())
 }
 
 #[tauri::command]
@@ -69,6 +76,7 @@ fn main() {
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             get_local_ip,
+            get_running_processes,
             start_stream_server,
             stop_stream_server,
             start_cloudflare_tunnel,

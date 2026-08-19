@@ -28,6 +28,8 @@ export function App() {
     enableAudio: true,
     enableMic: false,
     isolateDiscord: true,
+    gameVolume: 1.0,
+    micVolume: 1.0,
     port: 8080,
     pin: '',
     enableCloudflare: true,
