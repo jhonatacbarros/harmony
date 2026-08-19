@@ -62,15 +62,12 @@ impl TunnelManager {
             let mut lines = reader.lines();
             let re = Regex::new(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com").unwrap();
 
-            let mut found_url: Option<String> = None;
-
             while let Ok(Some(line)) = lines.next_line().await {
                 if let Some(mat) = re.find(&line) {
                     let url = mat.as_str().to_string();
                     let mut current = url_mutex.lock().await;
                     *current = Some(url.clone());
-                    let _ = url_tx.send(url.clone()).await;
-                    found_url = Some(url);
+                    let _ = url_tx.send(url).await;
                     break;
                 }
             }

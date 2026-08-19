@@ -177,9 +177,13 @@ async fn ws_viewer_handler(
     Query(params): Query<ViewerParams>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    let viewer_id = params
-        .id
-        .unwrap_or_else(|| format!("v_{}", rand::random::<u32>()));
+    let viewer_id = params.id.unwrap_or_else(|| {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        format!("v_{}", ts)
+    });
     let provided_pin = params.pin;
 
     ws.on_upgrade(move |socket| handle_viewer_socket(socket, state, viewer_id, provided_pin))
