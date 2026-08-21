@@ -1,6 +1,6 @@
 [package]
 name = "harmony"
-version = "1.0.0"
+version = "1.4.0"
 description = "Harmony Desktop Streamer"
 authors = ["Jhonata Carvalho"]
 edition = "2021"
