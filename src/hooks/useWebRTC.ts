@@ -23,6 +23,70 @@ async function tauriInvoke<T>(cmd: string, args?: any): Promise<T | null> {
   return null;
 }
 
+// Optimize codec preference prioritizing H.264 GPU Hardware Acceleration
+function optimizeCodecs(pc: RTCPeerConnection) {
+  try {
+    const transceivers = pc.getTransceivers();
+    for (const transceiver of transceivers) {
+      if (transceiver.sender.track?.kind === 'video' && 'setCodecPreferences' in transceiver) {
+        const capabilities = RTCRtpSender.getCapabilities('video');
+        if (capabilities) {
+          const h264Codecs = capabilities.codecs.filter(
+            (c) => c.mimeType.toLowerCase() === 'video/h264'
+          );
+          const otherCodecs = capabilities.codecs.filter(
+            (c) => c.mimeType.toLowerCase() !== 'video/h264'
+          );
+          // Put H.264 (NVENC/AMD/Intel hardware) at the top of SDP
+          if (h264Codecs.length > 0) {
+            transceiver.setCodecPreferences([...h264Codecs, ...otherCodecs]);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Could not set codec preferences:', err);
+  }
+}
+
+// Configure max bitrate and maintain-framerate priority on video senders
+async function tuneSenderParameters(pc: RTCPeerConnection, targetBitrate: number) {
+  try {
+    const senders = pc.getSenders();
+    for (const sender of senders) {
+      if (sender.track?.kind === 'video') {
+        const params = sender.getParameters();
+        if (!params.encodings || params.encodings.length === 0) {
+          params.encodings = [{}];
+        }
+        params.encodings[0].maxBitrate = targetBitrate;
+        params.encodings[0].maxFramerate = 60;
+        params.encodings[0].scaleResolutionDownBy = 1.0;
+        // Priority for fluid framerate
+        // @ts-ignore
+        params.degradationPreference = 'maintain-framerate';
+        await sender.setParameters(params);
+      }
+    }
+  } catch (err) {
+    console.warn('Could not set sender parameters:', err);
+  }
+}
+
+// Inject high-bandwidth bitrate limits into SDP
+function boostSdpBitrate(sdp: string, bitrateKbps: number): string {
+  let modified = sdp.replace(
+    /(m=video .*\r\n)/g,
+    `$1b=AS:${bitrateKbps}\r\nb=TIAS:${bitrateKbps * 1000}\r\n`
+  );
+  // Inject Google specific start/max bitrate parameters
+  modified = modified.replace(
+    /a=fmtp:(\d+) (.*)/g,
+    `a=fmtp:$1 $2;x-google-min-bitrate=${Math.floor(bitrateKbps * 0.5)};x-google-max-bitrate=${bitrateKbps};x-google-start-bitrate=${Math.floor(bitrateKbps * 0.8)}`
+  );
+  return modified;
+}
+
 export function useWebRTC(settings: StreamSettings) {
   const [status, setStatus] = useState<StreamStatus>('idle');
   const [stream, setStream] = useState<MediaStream | null>(null);
@@ -38,6 +102,10 @@ export function useWebRTC(settings: StreamSettings) {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const gameGainRef = useRef<GainNode | null>(null);
   const micGainRef = useRef<GainNode | null>(null);
+
+  // Target Bitrate: 8.5 Mbps for 1080p 60fps, 4.5 Mbps for 720p 60fps
+  const targetBitrateBps = settings.quality === '1080p' ? 8_500_000 : 4_500_000;
+  const targetBitrateKbps = Math.floor(targetBitrateBps / 1000);
 
   // Dynamically update game audio and microphone volumes in real-time
   useEffect(() => {
@@ -85,7 +153,7 @@ export function useWebRTC(settings: StreamSettings) {
     setStatus('idle');
   }, []);
 
-  // Handle incoming viewer connection
+  // Handle incoming viewer connection with hardware acceleration & bitrate boosts
   const handleViewerOffer = useCallback(async (viewerId: string, offer: RTCSessionDescriptionInit) => {
     if (!streamRef.current) return;
 
@@ -93,12 +161,15 @@ export function useWebRTC(settings: StreamSettings) {
       const pc = new RTCPeerConnection(ICE_SERVERS);
       peersRef.current.set(viewerId, pc);
 
-      // Add all tracks from the captured screen/audio stream
+      // 1. Add all tracks from the captured screen/audio stream
       streamRef.current.getTracks().forEach((track) => {
         if (streamRef.current) {
           pc.addTrack(track, streamRef.current);
         }
       });
+
+      // 2. Set H.264 GPU Hardware Acceleration as preferred video codec
+      optimizeCodecs(pc);
 
       pc.onicecandidate = (event) => {
         if (event.candidate && socketRef.current?.readyState === WebSocket.OPEN) {
@@ -115,7 +186,14 @@ export function useWebRTC(settings: StreamSettings) {
 
       await pc.setRemoteDescription(new RTCSessionDescription(offer));
       const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
+
+      // 3. Inject High-Performance Bitrate into SDP
+      const boostedSdp = boostSdpBitrate(answer.sdp || '', targetBitrateKbps);
+      const boostedAnswer = { type: answer.type, sdp: boostedSdp };
+      await pc.setLocalDescription(boostedAnswer);
+
+      // 4. Tune sender parameters for 60 FPS lock & bitrate
+      await tuneSenderParameters(pc, targetBitrateBps);
 
       if (socketRef.current?.readyState === WebSocket.OPEN) {
         socketRef.current.send(
@@ -123,7 +201,7 @@ export function useWebRTC(settings: StreamSettings) {
             type: 'answer',
             senderId: 'host',
             targetId: viewerId,
-            payload: answer,
+            payload: boostedAnswer,
           })
         );
       }
@@ -139,7 +217,7 @@ export function useWebRTC(settings: StreamSettings) {
     } catch (err) {
       console.error(`Error handling offer from viewer ${viewerId}:`, err);
     }
-  }, []);
+  }, [targetBitrateBps, targetBitrateKbps]);
 
   // Connect to the local signaling server
   const connectSignaling = useCallback((port: number, pin: string) => {
@@ -202,14 +280,21 @@ export function useWebRTC(settings: StreamSettings) {
           width: { ideal: width, max: width },
           height: { ideal: height, max: height },
           frameRate: { ideal: settings.fps, max: settings.fps },
+          // @ts-ignore
+          cursor: 'always',
         },
         audio: shouldUseNativeProcessAudio ? false : settings.enableAudio,
       });
 
-      // Handle user stopping stream from native browser/OS banner
-      displayStream.getVideoTracks()[0].onended = () => {
-        stopStream();
-      };
+      // Optimize video track for fast-motion games (locks 60 FPS)
+      const videoTrack = displayStream.getVideoTracks()[0];
+      if (videoTrack) {
+        // @ts-ignore
+        videoTrack.contentHint = 'motion';
+        videoTrack.onended = () => {
+          stopStream();
+        };
+      }
 
       let finalStream = displayStream;
 
@@ -299,7 +384,7 @@ export function useWebRTC(settings: StreamSettings) {
         const mixedAudioTrack = destination.stream.getAudioTracks()[0];
         if (mixedAudioTrack) {
           finalStream = new MediaStream([
-            displayStream.getVideoTracks()[0],
+            videoTrack,
             mixedAudioTrack,
           ]);
         }

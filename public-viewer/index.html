@@ -48,7 +48,7 @@
       </div>
       <div>
         <h1 class="text-xs font-bold tracking-wider text-white uppercase font-mono">Harmony Studio</h1>
-        <p class="text-[10px] text-zinc-400">Transmissão em Tempo Real • P2P WebRTC</p>
+        <p class="text-[10px] text-zinc-400">1080p 60FPS • Ultra Low-Latency WebRTC</p>
       </div>
     </div>
 
@@ -208,6 +208,16 @@
           remoteVideo.srcObject = event.streams[0];
           updateStatus('live', 'AO VIVO');
 
+          // Ultra low-latency playback configuration
+          if (event.receiver) {
+            if ('playoutDelayHint' in event.receiver) {
+              event.receiver.playoutDelayHint = 0;
+            }
+            if ('jitterBufferTarget' in event.receiver) {
+              event.receiver.jitterBufferTarget = 0;
+            }
+          }
+
           remoteVideo.play().catch(() => {
             unmuteOverlay.classList.remove('hidden');
           });
@@ -284,6 +294,17 @@
         setTimeout(connectWebSocket, 3000);
       };
     }
+
+    // Low-Latency Automatic Drift Watchdog (< 200ms lag)
+    setInterval(() => {
+      if (remoteVideo && !remoteVideo.paused && remoteVideo.buffered.length > 0) {
+        const bufferedEnd = remoteVideo.buffered.end(remoteVideo.buffered.length - 1);
+        const lag = bufferedEnd - remoteVideo.currentTime;
+        if (lag > 0.35) {
+          remoteVideo.currentTime = bufferedEnd - 0.05;
+        }
+      }
+    }, 1000);
 
     // Volume Slider
     volumeSlider.addEventListener('input', (e) => {

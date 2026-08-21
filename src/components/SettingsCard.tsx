@@ -139,7 +139,7 @@ export const SettingsCard: FC<SettingsCardProps> = ({
                 >
                   <span className="text-xs font-bold">{q}</span>
                   <span className="text-[10px] opacity-75 mt-0.5">
-                    {q === '720p' ? '1280x720 • ~3 Mbps' : '1920x1080 • ~7 Mbps'}
+                    {q === '720p' ? '1280x720 • ~4.5 Mbps GPU' : '1920x1080 • ~8.5 Mbps GPU'}
                   </span>
                 </button>
               );
