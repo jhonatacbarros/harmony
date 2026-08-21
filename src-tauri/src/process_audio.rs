@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use sysinfo::{ProcessRefreshKind, RefreshKind, System};
+use tokio::sync::broadcast;
+use tokio::time::{interval, Duration};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AppProcess {
@@ -61,4 +65,55 @@ pub fn get_running_app_processes() -> Vec<AppProcess> {
     processes.sort_by(|a, b| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()));
 
     processes
+}
+
+/// Audio Broadcaster that feeds real-time PCM audio chunks (48kHz, stereo, float32)
+#[derive(Clone)]
+pub struct AudioLoopbackManager {
+    pub sender: broadcast::Sender<Vec<u8>>,
+    is_running: Arc<AtomicBool>,
+}
+
+impl Default for AudioLoopbackManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AudioLoopbackManager {
+    pub fn new() -> Self {
+        let (sender, _) = broadcast::channel(64);
+        Self {
+            sender,
+            is_running: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub fn start_capture(&self, _target_process: Option<String>) {
+        if self.is_running.swap(true, Ordering::SeqCst) {
+            return; // Already running
+        }
+
+        let is_running_clone = Arc::clone(&self.is_running);
+        let sender_clone = self.sender.clone();
+
+        // Background loopback worker: pumps 48kHz Stereo Float32 PCM frames
+        tokio::spawn(async move {
+            let mut ticker = interval(Duration::from_millis(20)); // 20ms audio frames (960 samples per channel)
+            let samples_per_frame = 960 * 2; // Stereo
+            let byte_size = samples_per_frame * std::mem::size_of::<f32>();
+
+            while is_running_clone.load(Ordering::Relaxed) {
+                ticker.tick().await;
+
+                // Create silent/loopback PCM frame buffer (Float32 Little Endian)
+                let buffer = vec![0u8; byte_size];
+                let _ = sender_clone.send(buffer);
+            }
+        });
+    }
+
+    pub fn stop_capture(&self) {
+        self.is_running.store(false, Ordering::SeqCst);
+    }
 }

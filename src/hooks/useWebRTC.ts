@@ -10,6 +10,19 @@ const ICE_SERVERS = {
   ],
 };
 
+// Safe Tauri invoke helper
+async function tauriInvoke<T>(cmd: string, args?: any): Promise<T | null> {
+  try {
+    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      return await invoke<T>(cmd, args);
+    }
+  } catch (err) {
+    console.warn(`Tauri command '${cmd}' could not be executed:`, err);
+  }
+  return null;
+}
+
 export function useWebRTC(settings: StreamSettings) {
   const [status, setStatus] = useState<StreamStatus>('idle');
   const [stream, setStream] = useState<MediaStream | null>(null);
@@ -19,6 +32,7 @@ export function useWebRTC(settings: StreamSettings) {
   const streamRef = useRef<MediaStream | null>(null);
   const peersRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const socketRef = useRef<WebSocket | null>(null);
+  const audioSocketRef = useRef<WebSocket | null>(null);
 
   // Audio Graph Nodes for real-time volume mixing
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -39,7 +53,7 @@ export function useWebRTC(settings: StreamSettings) {
   }, [settings.micVolume]);
 
   // Stop all media tracks, audio nodes, and peer connections
-  const cleanup = useCallback(() => {
+  const cleanup = useCallback(async () => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
@@ -52,12 +66,19 @@ export function useWebRTC(settings: StreamSettings) {
       socketRef.current = null;
     }
 
+    if (audioSocketRef.current) {
+      audioSocketRef.current.close();
+      audioSocketRef.current = null;
+    }
+
     if (audioCtxRef.current) {
       audioCtxRef.current.close().catch(() => {});
       audioCtxRef.current = null;
     }
     gameGainRef.current = null;
     micGainRef.current = null;
+
+    await tauriInvoke('stop_native_audio_capture');
 
     setStream(null);
     setViewerCount(0);
@@ -172,16 +193,9 @@ export function useWebRTC(settings: StreamSettings) {
       const width = settings.quality === '1080p' ? 1920 : 1280;
       const height = settings.quality === '1080p' ? 1080 : 720;
 
-      // Request screen capture with audio constraints
-      const audioOptions: boolean | MediaTrackConstraints = settings.enableAudio
-        ? (settings.isolateDiscord
-            ? {
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true,
-              }
-            : true)
-        : false;
+      // When target process is selected or Discord isolation is active,
+      // we request video ONLY from getDisplayMedia (audio: false) to prevent Windows from mixing Discord!
+      const shouldUseNativeProcessAudio = Boolean(settings.targetProcessName) || settings.isolateDiscord;
 
       const displayStream = await navigator.mediaDevices.getDisplayMedia({
         video: {
@@ -189,36 +203,78 @@ export function useWebRTC(settings: StreamSettings) {
           height: { ideal: height, max: height },
           frameRate: { ideal: settings.fps, max: settings.fps },
         },
-        audio: audioOptions,
+        audio: shouldUseNativeProcessAudio ? false : settings.enableAudio,
       });
 
-      // Handle user stopping stream from the native browser/OS banner
+      // Handle user stopping stream from native browser/OS banner
       displayStream.getVideoTracks()[0].onended = () => {
         stopStream();
       };
 
       let finalStream = displayStream;
 
-      // Build WebAudio Mixing Graph with GainNodes for Game & Mic
-      const audioCtx = new AudioContext();
+      // Build WebAudio Mixing Graph
+      const audioCtx = new AudioContext({ sampleRate: 48000 });
       audioCtxRef.current = audioCtx;
       const destination = audioCtx.createMediaStreamDestination();
 
       let hasAudioTracks = false;
 
-      // 1. Connect Game Audio track with volume control
-      if (settings.enableAudio && displayStream.getAudioTracks().length > 0) {
-        const gameTrack = displayStream.getAudioTracks()[0];
-        const gameSource = audioCtx.createMediaStreamSource(new MediaStream([gameTrack]));
-        const gameGain = audioCtx.createGain();
-        gameGain.gain.value = settings.gameVolume ?? 1.0;
-        gameSource.connect(gameGain);
-        gameGain.connect(destination);
-        gameGainRef.current = gameGain;
-        hasAudioTracks = true;
+      // 1. Process/Game Audio Path
+      if (settings.enableAudio) {
+        if (shouldUseNativeProcessAudio) {
+          // Trigger Rust native WASAPI loopback capture for target process
+          await tauriInvoke('start_native_audio_capture', {
+            processName: settings.targetProcessName || null,
+          });
+
+          // Connect to internal audio stream socket
+          const audioWs = new WebSocket(`ws://localhost:${settings.port}/ws/audio_loopback`);
+          audioSocketRef.current = audioWs;
+          audioWs.binaryType = 'arraybuffer';
+
+          const gameGain = audioCtx.createGain();
+          gameGain.gain.value = settings.gameVolume ?? 1.0;
+          gameGain.connect(destination);
+          gameGainRef.current = gameGain;
+
+          audioWs.onmessage = (e) => {
+            if (e.data instanceof ArrayBuffer && audioCtx.state === 'running') {
+              const floatArray = new Float32Array(e.data);
+              const numFrames = floatArray.length / 2;
+              if (numFrames > 0) {
+                const buffer = audioCtx.createBuffer(2, numFrames, 48000);
+                const left = buffer.getChannelData(0);
+                const right = buffer.getChannelData(1);
+
+                for (let i = 0; i < numFrames; i++) {
+                  left[i] = floatArray[i * 2];
+                  right[i] = floatArray[i * 2 + 1];
+                }
+
+                const source = audioCtx.createBufferSource();
+                source.buffer = buffer;
+                source.connect(gameGain);
+                source.start();
+              }
+            }
+          };
+
+          hasAudioTracks = true;
+        } else if (displayStream.getAudioTracks().length > 0) {
+          // Standard system loopback
+          const gameTrack = displayStream.getAudioTracks()[0];
+          const gameSource = audioCtx.createMediaStreamSource(new MediaStream([gameTrack]));
+          const gameGain = audioCtx.createGain();
+          gameGain.gain.value = settings.gameVolume ?? 1.0;
+          gameSource.connect(gameGain);
+          gameGain.connect(destination);
+          gameGainRef.current = gameGain;
+          hasAudioTracks = true;
+        }
       }
 
-      // 2. Connect Microphone track with independent volume control
+      // 2. Host Microphone Path
       if (settings.enableMic) {
         try {
           const micStream = await navigator.mediaDevices.getUserMedia({
@@ -262,7 +318,7 @@ export function useWebRTC(settings: StreamSettings) {
     }
   }, [settings, connectSignaling, cleanup]);
 
-  // Pause / Resume transmission (mutes video/audio track without closing peer connections)
+  // Pause / Resume transmission
   const togglePause = useCallback(() => {
     if (!streamRef.current) return;
 

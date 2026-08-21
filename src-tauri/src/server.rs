@@ -1,3 +1,4 @@
+use crate::process_audio::AudioLoopbackManager;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -22,6 +23,7 @@ pub struct AppState {
     pub pin: Arc<Mutex<Option<String>>>,
     pub host_tx: Arc<Mutex<Option<mpsc::UnboundedSender<String>>>>,
     pub viewers: Arc<Mutex<HashMap<String, mpsc::UnboundedSender<String>>>>,
+    pub audio_loopback: Arc<AudioLoopbackManager>,
 }
 
 #[derive(Deserialize)]
@@ -48,12 +50,20 @@ pub struct SignalingPacket {
 }
 
 pub struct ServerManager {
+    pub audio_loopback: Arc<AudioLoopbackManager>,
     shutdown_tx: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+}
+
+impl Default for ServerManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ServerManager {
     pub fn new() -> Self {
         Self {
+            audio_loopback: Arc::new(AudioLoopbackManager::new()),
             shutdown_tx: Arc::new(Mutex::new(None)),
         }
     }
@@ -65,12 +75,14 @@ impl ServerManager {
             pin: Arc::new(Mutex::new(pin)),
             host_tx: Arc::new(Mutex::new(None)),
             viewers: Arc::new(Mutex::new(HashMap::new())),
+            audio_loopback: Arc::clone(&self.audio_loopback),
         };
 
         let app = Router::new()
             .route("/", get(serve_viewer_html))
             .route("/ws/host", get(ws_host_handler))
             .route("/ws/viewer", get(ws_viewer_handler))
+            .route("/ws/audio_loopback", get(ws_audio_loopback_handler))
             .layer(CorsLayer::permissive())
             .with_state(state);
 
@@ -109,18 +121,34 @@ async fn serve_viewer_html() -> impl IntoResponse {
     Html(VIEWER_HTML)
 }
 
+async fn ws_audio_loopback_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    ws.on_upgrade(|socket| handle_audio_loopback_socket(socket, state))
+}
+
+async fn handle_audio_loopback_socket(mut socket: WebSocket, state: AppState) {
+    let mut rx = state.audio_loopback.sender.subscribe();
+
+    while let Ok(buffer) = rx.recv().await {
+        if socket.send(Message::Binary(buffer)).await.is_err() {
+            break;
+        }
+    }
+}
+
 async fn ws_host_handler(
     ws: WebSocketUpgrade,
     Query(params): Query<HostParams>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    // Update PIN if provided
     if let Some(p) = params.pin {
         let mut pin_guard = state.pin.lock().await;
         *pin_guard = if p.is_empty() { None } else { Some(p) };
     }
 
-    ws.on_upgrade(move |socket| handle_host_socket(socket, state))
+    ws.on_upgrade(|socket| handle_host_socket(socket, state))
 }
 
 async fn handle_host_socket(socket: WebSocket, state: AppState) {
@@ -128,11 +156,10 @@ async fn handle_host_socket(socket: WebSocket, state: AppState) {
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
 
     {
-        let mut host_guard = state.host_tx.lock().await;
-        *host_guard = Some(tx);
+        let mut host_tx = state.host_tx.lock().await;
+        *host_tx = Some(tx);
     }
 
-    // Forward messages from channel to Host WebSocket
     let mut send_task = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             if ws_sender.send(Message::Text(msg)).await.is_err() {
@@ -141,7 +168,6 @@ async fn handle_host_socket(socket: WebSocket, state: AppState) {
         }
     });
 
-    // Forward messages from Host to appropriate Viewers
     let state_clone = state.clone();
     let mut recv_task = tokio::spawn(async move {
         while let Some(Ok(Message::Text(text))) = ws_receiver.next().await {
@@ -150,12 +176,6 @@ async fn handle_host_socket(socket: WebSocket, state: AppState) {
                     let viewers = state_clone.viewers.lock().await;
                     if let Some(viewer_tx) = viewers.get(&target_id) {
                         let _ = viewer_tx.send(text);
-                    }
-                } else if packet.msg_type == "status" {
-                    // Broadcast status update (e.g. paused/live) to all viewers
-                    let viewers = state_clone.viewers.lock().await;
-                    for viewer_tx in viewers.values() {
-                        let _ = viewer_tx.send(text.clone());
                     }
                 }
             }
@@ -167,9 +187,8 @@ async fn handle_host_socket(socket: WebSocket, state: AppState) {
         _ = (&mut recv_task) => send_task.abort(),
     }
 
-    // Clear host sender
-    let mut host_guard = state.host_tx.lock().await;
-    *host_guard = None;
+    let mut host_tx = state.host_tx.lock().await;
+    *host_tx = None;
 }
 
 async fn ws_viewer_handler(
@@ -177,13 +196,9 @@ async fn ws_viewer_handler(
     Query(params): Query<ViewerParams>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    let viewer_id = params.id.unwrap_or_else(|| {
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        format!("v_{}", ts)
-    });
+    let viewer_id = params
+        .id
+        .unwrap_or_else(|| format!("v_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()));
     let provided_pin = params.pin;
 
     ws.on_upgrade(move |socket| handle_viewer_socket(socket, state, viewer_id, provided_pin))
@@ -197,7 +212,6 @@ async fn handle_viewer_socket(
 ) {
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
-    // Check PIN requirement
     let current_pin = state.pin.lock().await.clone();
     if let Some(required_pin) = current_pin {
         let is_valid = provided_pin.as_ref() == Some(&required_pin);
@@ -219,7 +233,6 @@ async fn handle_viewer_socket(
         viewers.insert(viewer_id.clone(), tx);
     }
 
-    // Send messages from Host to Viewer
     let mut send_task = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             if ws_sender.send(Message::Text(msg)).await.is_err() {
@@ -228,7 +241,6 @@ async fn handle_viewer_socket(
         }
     });
 
-    // Forward messages from Viewer to Host
     let state_clone = state.clone();
     let viewer_id_clone = viewer_id.clone();
     let mut recv_task = tokio::spawn(async move {
@@ -245,7 +257,6 @@ async fn handle_viewer_socket(
         _ = (&mut recv_task) => send_task.abort(),
     }
 
-    // Remove viewer and notify host
     {
         let mut viewers = state.viewers.lock().await;
         viewers.remove(&viewer_id_clone);

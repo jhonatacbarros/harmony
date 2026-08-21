@@ -31,6 +31,21 @@ async fn get_running_processes() -> Result<Vec<AppProcess>, String> {
 }
 
 #[tauri::command]
+async fn start_native_audio_capture(
+    process_name: Option<String>,
+    state: State<'_, AppStateWrapper>,
+) -> Result<(), String> {
+    state.server.audio_loopback.start_capture(process_name);
+    Ok(())
+}
+
+#[tauri::command]
+async fn stop_native_audio_capture(state: State<'_, AppStateWrapper>) -> Result<(), String> {
+    state.server.audio_loopback.stop_capture();
+    Ok(())
+}
+
+#[tauri::command]
 async fn start_stream_server(
     port: u16,
     pin: Option<String>,
@@ -77,6 +92,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_local_ip,
             get_running_processes,
+            start_native_audio_capture,
+            stop_native_audio_capture,
             start_stream_server,
             stop_stream_server,
             start_cloudflare_tunnel,
