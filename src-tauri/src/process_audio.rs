@@ -6,6 +6,58 @@ use std::thread::JoinHandle;
 use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 use tokio::sync::broadcast;
 use wasapi::{initialize_mta, AudioClient, Direction, SampleType, StreamMode, WaveFormat};
+use windows::core::BOOL;
+use windows::Win32::Foundation::{HWND, LPARAM};
+use windows::Win32::UI::WindowsAndMessaging::{
+    EnumWindows, GetWindow, GetWindowLongW, GetWindowTextLengthW, GetWindowThreadProcessId,
+    IsWindowVisible, GWL_EXSTYLE, GW_OWNER, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+};
+
+/// Enumerates top-level, visible, titled windows (the same "alt-tab" heuristic Windows
+/// itself uses) and returns the set of process IDs that own at least one of them. This
+/// is what separates real user-facing apps/games from background services.
+fn get_pids_with_visible_windows() -> HashSet<u32> {
+    let mut pids: HashSet<u32> = HashSet::new();
+    unsafe {
+        let _ = EnumWindows(
+            Some(enum_windows_callback),
+            LPARAM(&mut pids as *mut HashSet<u32> as isize),
+        );
+    }
+    pids
+}
+
+unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    let pids = &mut *(lparam.0 as *mut HashSet<u32>);
+
+    if !IsWindowVisible(hwnd).as_bool() {
+        return BOOL(1);
+    }
+    if GetWindowTextLengthW(hwnd) == 0 {
+        return BOOL(1);
+    }
+
+    let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+    let is_app_window = (ex_style & WS_EX_APPWINDOW.0) != 0;
+    let is_tool_window = (ex_style & WS_EX_TOOLWINDOW.0) != 0;
+    if is_tool_window && !is_app_window {
+        return BOOL(1);
+    }
+
+    // Skip windows owned by another window (tooltips, dialogs) unless explicitly an app window.
+    let has_owner = GetWindow(hwnd, GW_OWNER).map(|owner| owner.0 != std::ptr::null_mut()).unwrap_or(false);
+    if has_owner && !is_app_window {
+        return BOOL(1);
+    }
+
+    let mut pid: u32 = 0;
+    GetWindowThreadProcessId(hwnd, Some(&mut pid));
+    if pid != 0 {
+        pids.insert(pid);
+    }
+
+    BOOL(1)
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AppProcess {
@@ -32,10 +84,18 @@ pub fn get_running_app_processes() -> Vec<AppProcess> {
         "harmony.exe", "cloudflared.exe"
     ].iter().cloned().collect();
 
+    let visible_pids = get_pids_with_visible_windows();
+
     let mut seen_names = HashSet::new();
     let mut processes = Vec::new();
 
     for (pid, process) in sys.processes() {
+        // Only list processes that own at least one visible, titled window (the same
+        // heuristic the Windows taskbar/Alt+Tab use) — filters out background services.
+        if !visible_pids.contains(&pid.as_u32()) {
+            continue;
+        }
+
         let name = process.name().to_string();
         let name_lower = name.to_lowercase();
 
