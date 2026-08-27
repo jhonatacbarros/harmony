@@ -23,6 +23,15 @@ async function tauriInvoke<T>(cmd: string, args?: any): Promise<T | null> {
   return null;
 }
 
+// Tauri invoke helper that rejects on backend error instead of swallowing it
+async function tauriInvokeStrict<T>(cmd: string, args?: any): Promise<T> {
+  if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
+    throw new Error('Captura de áudio por processo requer o aplicativo desktop Harmony.');
+  }
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke<T>(cmd, args);
+}
+
 // Optimize codec preference prioritizing H.264 GPU Hardware Acceleration
 function optimizeCodecs(pc: RTCPeerConnection) {
   try {
@@ -271,9 +280,9 @@ export function useWebRTC(settings: StreamSettings) {
       const width = settings.quality === '1080p' ? 1920 : 1280;
       const height = settings.quality === '1080p' ? 1080 : 720;
 
-      // When target process is selected or Discord isolation is active,
-      // we request video ONLY from getDisplayMedia (audio: false) to prevent Windows from mixing Discord!
-      const shouldUseNativeProcessAudio = Boolean(settings.targetProcessName) || settings.isolateDiscord;
+      // Use browser/system audio by default. The native process path is only
+      // selected when the user explicitly chooses a target process.
+      const shouldUseNativeProcessAudio = typeof settings.targetProcessPid === 'number';
 
       const displayStream = await navigator.mediaDevices.getDisplayMedia({
         video: {
@@ -301,6 +310,9 @@ export function useWebRTC(settings: StreamSettings) {
       // Build WebAudio Mixing Graph
       const audioCtx = new AudioContext({ sampleRate: 48000 });
       audioCtxRef.current = audioCtx;
+      if (audioCtx.state === 'suspended') {
+        await audioCtx.resume();
+      }
       const destination = audioCtx.createMediaStreamDestination();
 
       let hasAudioTracks = false;
@@ -308,9 +320,9 @@ export function useWebRTC(settings: StreamSettings) {
       // 1. Process/Game Audio Path
       if (settings.enableAudio) {
         if (shouldUseNativeProcessAudio) {
-          // Trigger Rust native WASAPI loopback capture for target process
-          await tauriInvoke('start_native_audio_capture', {
-            processName: settings.targetProcessName || null,
+          // Trigger Rust native Process Loopback (WASAPI) capture for the target process
+          await tauriInvokeStrict('start_native_audio_capture', {
+            targetPid: settings.targetProcessPid,
           });
 
           // Connect to internal audio stream socket

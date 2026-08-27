@@ -92,15 +92,23 @@ export const SettingsCard: FC<SettingsCardProps> = ({
           <div className="relative">
             <select
               disabled={isStreaming}
-              value={settings.targetProcessName || '__system__'}
-              onChange={(e) => updateSetting('targetProcessName', e.target.value === '__system__' ? undefined : e.target.value)}
+              value={settings.targetProcessPid ?? '__system__'}
+              onChange={(e) => {
+                if (e.target.value === '__system__') {
+                  onChange({ ...settings, targetProcessPid: undefined, targetProcessName: undefined });
+                  return;
+                }
+                const pid = Number(e.target.value);
+                const proc = processes.find((p) => p.pid === pid);
+                onChange({ ...settings, targetProcessPid: pid, targetProcessName: proc?.name });
+              }}
               className="w-full rounded-xl glass-input px-3.5 py-2.5 text-xs text-zinc-200 bg-surface-300 border border-white/[0.08] focus:outline-none focus:border-zinc-400 appearance-none cursor-pointer disabled:opacity-50"
             >
               <option value="__system__" className="bg-zinc-900 text-zinc-200">
                 🌐 Áudio Geral do Sistema (Padrão)
               </option>
               {processes.map((proc) => (
-                <option key={proc.pid} value={proc.name} className="bg-zinc-900 text-zinc-200">
+                <option key={proc.pid} value={proc.pid} className="bg-zinc-900 text-zinc-200">
                   🎮 {proc.display_name} ({proc.name})
                 </option>
               ))}

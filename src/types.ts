@@ -13,6 +13,7 @@ export interface StreamSettings {
   enableAudio: boolean;
   enableMic: boolean;
   isolateDiscord: boolean;
+  targetProcessPid?: number;
   targetProcessName?: string;
   gameVolume: number; // 0.0 to 1.0
   micVolume: number;  // 0.0 to 1.0

@@ -32,17 +32,21 @@ async fn get_running_processes() -> Result<Vec<AppProcess>, String> {
 
 #[tauri::command]
 async fn start_native_audio_capture(
-    process_name: Option<String>,
+    target_pid: Option<u32>,
     state: State<'_, AppStateWrapper>,
 ) -> Result<(), String> {
-    state.server.audio_loopback.start_capture(process_name);
-    Ok(())
+    let loopback = Arc::clone(&state.server.audio_loopback);
+    tokio::task::spawn_blocking(move || loopback.start_capture(target_pid))
+        .await
+        .map_err(|e| format!("Falha ao iniciar captura de áudio: {}", e))?
 }
 
 #[tauri::command]
 async fn stop_native_audio_capture(state: State<'_, AppStateWrapper>) -> Result<(), String> {
-    state.server.audio_loopback.stop_capture();
-    Ok(())
+    let loopback = Arc::clone(&state.server.audio_loopback);
+    tokio::task::spawn_blocking(move || loopback.stop_capture())
+        .await
+        .map_err(|e| format!("Falha ao parar captura de áudio: {}", e))
 }
 
 #[tauri::command]
