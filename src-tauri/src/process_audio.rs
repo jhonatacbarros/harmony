@@ -157,7 +157,7 @@ fn run_capture_loop(
     sender: broadcast::Sender<Vec<u8>>,
     ready_tx: std::sync::mpsc::Sender<Result<(), String>>,
 ) {
-    if let Err(e) = initialize_mta() {
+    if let Err(e) = initialize_mta().ok() {
         let _ = ready_tx.send(Err(format!(
             "Falha ao inicializar COM (MTA): {:?}. Verifique se o Windows é compatível.",
             e
