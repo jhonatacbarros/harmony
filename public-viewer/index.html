@@ -185,6 +185,19 @@
     let ws = null;
     let viewerId = 'viewer_' + Math.random().toString(36).substr(2, 9);
     let enteredPin = '';
+    let hasReceivedStream = false;
+    let audioUnlocked = false;
+
+    async function playRemoteVideo() {
+      try {
+        await remoteVideo.play();
+        return true;
+      } catch (error) {
+        console.warn('Playback requires a user gesture:', error);
+        unmuteOverlay.classList.remove('hidden');
+        return false;
+      }
+    }
 
     function updateStatus(state, message) {
       statusText.innerText = message;
@@ -202,25 +215,38 @@
 
     async function startWebRTC() {
       pc = new RTCPeerConnection(ICE_SERVERS);
+      hasReceivedStream = false;
 
       pc.ontrack = (event) => {
         if (event.streams && event.streams[0]) {
-          remoteVideo.srcObject = event.streams[0];
-          updateStatus('live', 'AO VIVO');
+          const stream = event.streams[0];
 
-          // Ultra low-latency playback configuration
-          if (event.receiver) {
-            if ('playoutDelayHint' in event.receiver) {
-              event.receiver.playoutDelayHint = 0;
+          // ontrack fires once per track (video, then audio) for the same stream.
+          // Only wire up srcObject/playback on the first one to avoid resetting
+          // mute state (and re-showing the unmute overlay) on the second firing.
+          if (!hasReceivedStream) {
+            hasReceivedStream = true;
+            remoteVideo.srcObject = stream;
+            updateStatus('live', 'AO VIVO');
+
+            // Ultra low-latency playback configuration
+            if (event.receiver) {
+              if ('playoutDelayHint' in event.receiver) {
+                event.receiver.playoutDelayHint = 0;
+              }
+              if ('jitterBufferTarget' in event.receiver) {
+                event.receiver.jitterBufferTarget = 0;
+              }
             }
-            if ('jitterBufferTarget' in event.receiver) {
-              event.receiver.jitterBufferTarget = 0;
-            }
+
+            // Start muted so browser autoplay policies allow the video to render.
+            remoteVideo.muted = !audioUnlocked;
+            playRemoteVideo();
           }
 
-          remoteVideo.play().catch(() => {
+          if (!audioUnlocked && stream.getAudioTracks().length > 0) {
             unmuteOverlay.classList.remove('hidden');
-          });
+          }
         }
       };
 
@@ -325,9 +351,11 @@
     });
 
     unmuteOverlay.addEventListener('click', () => {
+      audioUnlocked = true;
       remoteVideo.muted = false;
-      remoteVideo.play();
-      unmuteOverlay.classList.add('hidden');
+      playRemoteVideo().then((isPlaying) => {
+        if (isPlaying) unmuteOverlay.classList.add('hidden');
+      });
     });
 
     fullscreenBtn.addEventListener('click', () => {

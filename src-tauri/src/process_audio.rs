@@ -1,10 +1,11 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 use tokio::sync::broadcast;
-use tokio::time::{interval, Duration};
+use wasapi::{initialize_mta, AudioClient, Direction, SampleType, StreamMode, WaveFormat};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AppProcess {
@@ -68,10 +69,12 @@ pub fn get_running_app_processes() -> Vec<AppProcess> {
 }
 
 /// Audio Broadcaster that feeds real-time PCM audio chunks (48kHz, stereo, float32)
+/// captured via the Windows Process Loopback API (WASAPI) for a specific target process.
 #[derive(Clone)]
 pub struct AudioLoopbackManager {
     pub sender: broadcast::Sender<Vec<u8>>,
     is_running: Arc<AtomicBool>,
+    thread_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
 impl Default for AudioLoopbackManager {
@@ -86,34 +89,166 @@ impl AudioLoopbackManager {
         Self {
             sender,
             is_running: Arc::new(AtomicBool::new(false)),
+            thread_handle: Arc::new(Mutex::new(None)),
         }
     }
 
-    pub fn start_capture(&self, _target_process: Option<String>) {
-        if self.is_running.swap(true, Ordering::SeqCst) {
-            return; // Already running
+    /// Starts capturing audio from `target_pid` (and its process tree). When `target_pid`
+    /// is `None`, the caller should fall back to the browser's own system-audio loopback
+    /// instead of calling this at all. Returns an error immediately if Process Loopback
+    /// Capture isn't available (e.g. Windows version older than Windows 10 2004).
+    pub fn start_capture(&self, target_pid: Option<u32>) -> Result<(), String> {
+        self.stop_capture();
+
+        let Some(target_pid) = target_pid else {
+            return Err("Nenhum processo alvo selecionado".to_string());
+        };
+
+        let is_running = Arc::clone(&self.is_running);
+        is_running.store(true, Ordering::SeqCst);
+
+        let sender = self.sender.clone();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
+
+        let handle = std::thread::Builder::new()
+            .name("harmony-audio-capture".to_string())
+            .spawn(move || {
+                run_capture_loop(target_pid, is_running, sender, ready_tx);
+            })
+            .map_err(|e| format!("Falha ao iniciar thread de captura de áudio: {}", e))?;
+
+        {
+            let mut guard = self.thread_handle.lock().unwrap();
+            *guard = Some(handle);
         }
 
-        let is_running_clone = Arc::clone(&self.is_running);
-        let sender_clone = self.sender.clone();
-
-        // Background loopback worker: pumps 48kHz Stereo Float32 PCM frames
-        tokio::spawn(async move {
-            let mut ticker = interval(Duration::from_millis(20)); // 20ms audio frames (960 samples per channel)
-            let samples_per_frame = 960 * 2; // Stereo
-            let byte_size = samples_per_frame * std::mem::size_of::<f32>();
-
-            while is_running_clone.load(Ordering::Relaxed) {
-                ticker.tick().await;
-
-                // Create silent/loopback PCM frame buffer (Float32 Little Endian)
-                let buffer = vec![0u8; byte_size];
-                let _ = sender_clone.send(buffer);
+        match ready_rx.recv_timeout(std::time::Duration::from_secs(3)) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => {
+                self.stop_capture();
+                Err(e)
             }
-        });
+            Err(_) => {
+                self.stop_capture();
+                Err("Tempo esgotado ao iniciar a captura de áudio do processo".to_string())
+            }
+        }
     }
 
     pub fn stop_capture(&self) {
         self.is_running.store(false, Ordering::SeqCst);
+
+        let handle = {
+            let mut guard = self.thread_handle.lock().unwrap();
+            guard.take()
+        };
+
+        if let Some(handle) = handle {
+            let _ = handle.join();
+        }
     }
+}
+
+/// Runs entirely on a dedicated OS thread: WASAPI's Process Loopback API relies on COM
+/// objects created and driven from a single apartment-threaded context.
+fn run_capture_loop(
+    target_pid: u32,
+    is_running: Arc<AtomicBool>,
+    sender: broadcast::Sender<Vec<u8>>,
+    ready_tx: std::sync::mpsc::Sender<Result<(), String>>,
+) {
+    if let Err(e) = initialize_mta() {
+        let _ = ready_tx.send(Err(format!(
+            "Falha ao inicializar COM (MTA): {:?}. Verifique se o Windows é compatível.",
+            e
+        )));
+        return;
+    }
+
+    let desired_format = WaveFormat::new(32, 32, &SampleType::Float, 48000, 2, None);
+    let block_align = desired_format.get_blockalign() as usize;
+    let include_process_tree = true;
+
+    let mut audio_client =
+        match AudioClient::new_application_loopback_client(target_pid, include_process_tree) {
+            Ok(client) => client,
+            Err(e) => {
+                let _ = ready_tx.send(Err(format!(
+                    "Captura de áudio por processo indisponível: {}. Requer Windows 10 2004+ ou Windows 11.",
+                    e
+                )));
+                return;
+            }
+        };
+
+    let mode = StreamMode::EventsShared {
+        autoconvert: true,
+        buffer_duration_hns: 0,
+    };
+
+    if let Err(e) = audio_client.initialize_client(&desired_format, &Direction::Capture, &mode) {
+        let _ = ready_tx.send(Err(format!(
+            "Falha ao inicializar cliente de áudio para o processo {}: {}",
+            target_pid, e
+        )));
+        return;
+    }
+
+    let h_event = match audio_client.set_get_eventhandle() {
+        Ok(ev) => ev,
+        Err(e) => {
+            let _ = ready_tx.send(Err(format!("Falha ao criar evento de captura: {}", e)));
+            return;
+        }
+    };
+
+    let capture_client = match audio_client.get_audiocaptureclient() {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = ready_tx.send(Err(format!(
+                "Falha ao obter cliente de captura de áudio: {}",
+                e
+            )));
+            return;
+        }
+    };
+
+    if let Err(e) = audio_client.start_stream() {
+        let _ = ready_tx.send(Err(format!("Falha ao iniciar fluxo de áudio: {}", e)));
+        return;
+    }
+
+    let _ = ready_tx.send(Ok(()));
+
+    // 20ms frames (960 samples per channel) to match the WebRTC audio pipeline cadence.
+    const FRAMES_PER_CHUNK: usize = 960;
+    let chunk_byte_size = block_align * FRAMES_PER_CHUNK;
+    let mut sample_queue: VecDeque<u8> = VecDeque::with_capacity(chunk_byte_size * 4);
+
+    while is_running.load(Ordering::Relaxed) {
+        match capture_client.get_next_packet_size() {
+            Ok(Some(frames)) if frames > 0 => {
+                if capture_client
+                    .read_from_device_to_deque(&mut sample_queue)
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            Ok(_) => {}
+            Err(_) => break,
+        }
+
+        while sample_queue.len() >= chunk_byte_size {
+            let chunk: Vec<u8> = sample_queue.drain(..chunk_byte_size).collect();
+            let _ = sender.send(chunk);
+        }
+
+        if h_event.wait_for_event(200).is_err() {
+            // Timeout is expected while idle; keep polling as long as we're told to run.
+            continue;
+        }
+    }
+
+    let _ = audio_client.stop_stream();
 }
