@@ -256,7 +256,15 @@
       pc.addTransceiver('video', { direction: 'recvonly' });
       pc.addTransceiver('audio', { direction: 'recvonly' });
 
-      const offer = await pc.createOffer();
+      const raw = await pc.createOffer();
+      // The Opus decoder follows our own SDP: without stereo=1 here it downmixes to mono
+      const opusPt = raw.sdp.match(/a=rtpmap:(\d+) opus\/48000\/2/i)?.[1];
+      const offer = {
+        type: raw.type,
+        sdp: opusPt
+          ? raw.sdp.replace(new RegExp(`(a=fmtp:${opusPt} [^\r\n]*)`), '$1;stereo=1;sprop-stereo=1')
+          : raw.sdp,
+      };
       await pc.setLocalDescription(offer);
 
       if (ws && ws.readyState === WebSocket.OPEN) {

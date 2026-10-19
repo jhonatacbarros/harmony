@@ -5,6 +5,7 @@ import { StreamStatus } from '../types';
 interface StreamControlsProps {
   status: StreamStatus;
   errorMessage: string | null;
+  warningMessage?: string | null;
   onStart: () => void;
   onPauseToggle: () => void;
   onStop: () => void;
@@ -13,6 +14,7 @@ interface StreamControlsProps {
 export const StreamControls: FC<StreamControlsProps> = ({
   status,
   errorMessage,
+  warningMessage,
   onStart,
   onPauseToggle,
   onStop,
@@ -28,6 +30,16 @@ export const StreamControls: FC<StreamControlsProps> = ({
           <div className="space-y-0.5">
             <span className="font-semibold block text-rose-300">Falha ao iniciar</span>
             <span className="text-rose-200/80 leading-relaxed">{errorMessage}</span>
+          </div>
+        </div>
+      )}
+
+      {warningMessage && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3.5 text-xs text-amber-200">
+          <AlertCircle className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
+          <div className="space-y-0.5">
+            <span className="font-semibold block text-amber-300">Atenção ao áudio</span>
+            <span className="text-amber-200/80 leading-relaxed">{warningMessage}</span>
           </div>
         </div>
       )}

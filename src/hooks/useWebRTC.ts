@@ -95,6 +95,8 @@ export function useWebRTC(settings: StreamSettings) {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [viewerCount, setViewerCount] = useState<number>(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // Non-fatal: the stream runs, but call audio may leak (shown next to the controls)
+  const [audioWarning, setAudioWarning] = useState<string | null>(null);
 
   const streamRef = useRef<MediaStream | null>(null);
   const peersRef = useRef<Map<string, RTCPeerConnection>>(new Map());
@@ -107,6 +109,8 @@ export function useWebRTC(settings: StreamSettings) {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const gameGainRef = useRef<GainNode | null>(null);
   const micGainRef = useRef<GainNode | null>(null);
+  // Raw capture tracks (display audio, mic) that never make it into the sent stream
+  const captureTracksRef = useRef<MediaStreamTrack[]>([]);
 
   const targetBitrateBps = Math.round(resolveBitrateMbps(settings) * 1_000_000);
   const contentMode: ContentMode = settings.contentMode ?? 'motion';
@@ -143,7 +147,7 @@ export function useWebRTC(settings: StreamSettings) {
   // Dynamically update game audio and microphone volumes in real-time
   useEffect(() => {
     if (gameGainRef.current) {
-      gameGainRef.current.gain.value = settings.gameVolume ?? 1.0;
+      gameGainRef.current.gain.value = Math.min(settings.gameVolume ?? 1.0, 1);
     }
   }, [settings.gameVolume]);
 
@@ -159,6 +163,8 @@ export function useWebRTC(settings: StreamSettings) {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     }
+    captureTracksRef.current.forEach((track) => track.stop());
+    captureTracksRef.current = [];
     peersRef.current.forEach((pc) => pc.close());
     peersRef.current.clear();
 
@@ -185,6 +191,7 @@ export function useWebRTC(settings: StreamSettings) {
     setPeerStats({});
     setStream(null);
     setViewerCount(0);
+    setAudioWarning(null);
     setStatus('idle');
   }, []);
 
@@ -305,14 +312,36 @@ export function useWebRTC(settings: StreamSettings) {
   const startStream = useCallback(async (session: SessionInfo) => {
     try {
       setErrorMessage(null);
+      setAudioWarning(null);
       setStatus('starting');
 
       const width = settings.quality === '1080p' ? 1920 : 1280;
       const height = settings.quality === '1080p' ? 1080 : 720;
 
-      // Use browser/system audio by default. The native process path is only
-      // selected when the user explicitly chooses a target process.
-      const shouldUseNativeProcessAudio = typeof settings.targetProcessPid === 'number';
+      // Native WASAPI Process Loopback: INCLUDE the chosen app, or (default) the whole
+      // system EXCLUDING Discord, like Discord itself does, so call voices never leak.
+      // Without a target and with isolation off, or where native capture is unavailable
+      // (non-Windows, Windows < 10 2004), fall back to the browser's system loopback.
+      const targetPid = settings.targetProcessPid;
+      let shouldUseNativeProcessAudio = false;
+      if (settings.enableAudio) {
+        if (typeof targetPid === 'number') {
+          await tauriInvokeStrict('start_native_audio_capture', { targetPid });
+          shouldUseNativeProcessAudio = true;
+        } else if (settings.isolateDiscord) {
+          try {
+            setAudioWarning(
+              await tauriInvokeStrict<string | null>('start_native_audio_capture', { targetPid: null })
+            );
+            shouldUseNativeProcessAudio = true;
+          } catch (err) {
+            console.warn('Native exclude capture unavailable, using system loopback:', err);
+            setAudioWarning(
+              'Anti-Eco indisponível (requer Windows 10 2004+): transmitindo todo o som do sistema, a call do Discord pode vazar na live.'
+            );
+          }
+        }
+      }
 
       // Capture screen with uncompressed stereo audio settings (no echo/noise suppression on game sound)
       const displayStream = await navigator.mediaDevices.getDisplayMedia({
@@ -344,6 +373,7 @@ export function useWebRTC(settings: StreamSettings) {
         };
       }
 
+      captureTracksRef.current.push(...displayStream.getAudioTracks());
       let finalStream = displayStream;
 
       // Build WebAudio Mixing Graph (48kHz stereo studio pipeline)
@@ -354,83 +384,57 @@ export function useWebRTC(settings: StreamSettings) {
       }
       const destination = audioCtx.createMediaStreamDestination();
 
-      // Master Limiter to prevent clipping / distortion when mixing loud game audio & mic
-      const limiter = audioCtx.createDynamicsCompressor();
-      limiter.threshold.setValueAtTime(-1.0, audioCtx.currentTime); // -1 dBFS ceiling
-      limiter.knee.setValueAtTime(0.0, audioCtx.currentTime);
-      limiter.ratio.setValueAtTime(20.0, audioCtx.currentTime);     // Hard limiting
-      limiter.attack.setValueAtTime(0.002, audioCtx.currentTime);   // 2ms fast attack
-      limiter.release.setValueAtTime(0.05, audioCtx.currentTime);   // 50ms release
-      limiter.connect(destination);
+      // Game audio is already mastered, so alone it goes straight out. Only when the mic
+      // is summed in does a gentle compressor tame peaks (a hard limiter + its automatic
+      // makeup gain was pushing past 0 dBFS and distorting).
+      let mixBus: AudioNode = destination;
+      if (settings.enableMic) {
+        const compressor = audioCtx.createDynamicsCompressor();
+        compressor.threshold.value = -6;
+        compressor.knee.value = 6;
+        compressor.ratio.value = 4;
+        compressor.attack.value = 0.005;
+        compressor.release.value = 0.15;
+        compressor.connect(destination);
+        mixBus = compressor;
+      }
 
       let hasAudioTracks = false;
 
       // 1. Process/Game Audio Path
-      if (settings.enableAudio) {
-        if (shouldUseNativeProcessAudio) {
-          // Trigger Rust native Process Loopback (WASAPI) capture for the target process
-          await tauriInvokeStrict('start_native_audio_capture', {
-            targetPid: settings.targetProcessPid,
-          });
+      const gameTrack = displayStream.getAudioTracks()[0];
+      if (settings.enableAudio && (shouldUseNativeProcessAudio || gameTrack)) {
+        // Game audio is already full-scale: gain above 1 only clips (old settings allowed 1.5)
+        const gameGain = audioCtx.createGain();
+        gameGain.gain.value = Math.min(settings.gameVolume ?? 1.0, 1);
+        gameGain.connect(mixBus);
+        gameGainRef.current = gameGain;
 
-          // Connect to internal audio stream socket
+        if (shouldUseNativeProcessAudio) {
+          // Ring-buffered player on the audio thread (see public/pcm-player.worklet.js).
+          // Built before the socket opens so no early chunk lands without a handler.
+          // ponytail: socket stays on the main thread; move it into a Worker posting
+          // straight to the worklet port if React stalls still cause gaps under load.
+          await audioCtx.audioWorklet.addModule('/pcm-player.worklet.js');
+          const player = new AudioWorkletNode(audioCtx, 'pcm-player', {
+            numberOfInputs: 0,
+            outputChannelCount: [2],
+          });
+          player.connect(gameGain);
+
           const audioWs = new WebSocket(
             `ws://localhost:${settings.port}/ws/audio_loopback?token=${encodeURIComponent(session.token)}`
           );
           audioSocketRef.current = audioWs;
           audioWs.binaryType = 'arraybuffer';
-
-          const gameGain = audioCtx.createGain();
-          gameGain.gain.value = settings.gameVolume ?? 1.0;
-          gameGain.connect(limiter);
-          gameGainRef.current = gameGain;
-
-          // Continuous playback timeline to eliminate gap/overlap clicks and hissing
-          let nextAudioPlayTime = 0;
-          const JITTER_BUFFER_SEC = 0.05; // 50ms buffer absorbs thread/socket timing jitter
-
           audioWs.onmessage = (e) => {
-            if (e.data instanceof ArrayBuffer && audioCtx.state === 'running') {
-              const floatArray = new Float32Array(e.data);
-              const numFrames = floatArray.length / 2;
-              if (numFrames > 0) {
-                const buffer = audioCtx.createBuffer(2, numFrames, 48000);
-                const left = buffer.getChannelData(0);
-                const right = buffer.getChannelData(1);
-
-                for (let i = 0; i < numFrames; i++) {
-                  left[i] = floatArray[i * 2];
-                  right[i] = floatArray[i * 2 + 1];
-                }
-
-                const source = audioCtx.createBufferSource();
-                source.buffer = buffer;
-                source.connect(gameGain);
-
-                const currentTime = audioCtx.currentTime;
-                // Re-sync if timing has fallen behind (underflow) or drifted too far ahead (>250ms)
-                if (nextAudioPlayTime < currentTime || nextAudioPlayTime > currentTime + 0.25) {
-                  nextAudioPlayTime = currentTime + JITTER_BUFFER_SEC;
-                }
-
-                source.start(nextAudioPlayTime);
-                nextAudioPlayTime += buffer.duration;
-              }
-            }
+            if (e.data instanceof ArrayBuffer) player.port.postMessage(e.data, [e.data]);
           };
-
-          hasAudioTracks = true;
-        } else if (displayStream.getAudioTracks().length > 0) {
-          // Standard system loopback
-          const gameTrack = displayStream.getAudioTracks()[0];
-          const gameSource = audioCtx.createMediaStreamSource(new MediaStream([gameTrack]));
-          const gameGain = audioCtx.createGain();
-          gameGain.gain.value = settings.gameVolume ?? 1.0;
-          gameSource.connect(gameGain);
-          gameGain.connect(limiter);
-          gameGainRef.current = gameGain;
-          hasAudioTracks = true;
+        } else {
+          // Browser system loopback (fallback)
+          audioCtx.createMediaStreamSource(new MediaStream([gameTrack])).connect(gameGain);
         }
+        hasAudioTracks = true;
       }
 
       // 2. Host Microphone Path
@@ -442,11 +446,12 @@ export function useWebRTC(settings: StreamSettings) {
               noiseSuppression: true,
             },
           });
+          captureTracksRef.current.push(...micStream.getTracks());
           const micSource = audioCtx.createMediaStreamSource(micStream);
           const micGain = audioCtx.createGain();
           micGain.gain.value = settings.micVolume ?? 1.0;
           micSource.connect(micGain);
-          micGain.connect(limiter);
+          micGain.connect(mixBus);
           micGainRef.current = micGain;
           hasAudioTracks = true;
         } catch (micErr) {
@@ -518,6 +523,7 @@ export function useWebRTC(settings: StreamSettings) {
     viewerCount,
     peerStats,
     errorMessage,
+    audioWarning,
     startStream,
     togglePause,
     stopStream,

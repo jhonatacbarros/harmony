@@ -47,6 +47,7 @@ export function App() {
     viewerCount,
     peerStats,
     errorMessage,
+    audioWarning,
     startStream,
     togglePause,
     stopStream,
@@ -141,6 +142,7 @@ export function App() {
           <StreamControls
             status={status}
             errorMessage={errorMessage ?? startError}
+            warningMessage={audioWarning}
             onStart={handleStart}
             onPauseToggle={togglePause}
             onStop={handleStop}
@@ -170,7 +172,7 @@ export function App() {
               <span>Dica para Transmissão de Jogos</span>
             </div>
             <p className="leading-relaxed text-[11px] text-zinc-400">
-              Para transmitir o áudio do jogo sem capturar a voz dos amigos no Discord, escolha a aba <strong className="text-zinc-200">"Janela"</strong> no pop-up de captura e selecione a janela do seu jogo.
+              Com o <strong className="text-zinc-200">Modo Anti-Eco Discord</strong> ligado, a live leva todo o som do PC menos o Discord, então seus amigos não se ouvem. Para mandar só o jogo, escolha-o como app alvo.
             </p>
             <div className="pt-1 flex items-center gap-1.5 text-[10px] text-zinc-500 font-mono">
               <HelpCircle className="h-3 w-3 text-zinc-600" />

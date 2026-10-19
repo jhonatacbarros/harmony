@@ -31,6 +31,8 @@ export const SettingsCard: FC<SettingsCardProps> = ({
   const [processes, setProcesses] = useState<AppProcess[]>([]);
   const [isLoadingProcesses, setIsLoadingProcesses] = useState(false);
   const isStreaming = status === 'live' || status === 'paused';
+  const hasTargetApp = typeof settings.targetProcessPid === 'number';
+  const antiEcoOn = settings.isolateDiscord && !hasTargetApp;
 
   const updateSetting = <K extends keyof StreamSettings>(
     key: K,
@@ -378,7 +380,7 @@ export const SettingsCard: FC<SettingsCardProps> = ({
                 <Mic className={`h-4 w-4 ${settings.enableMic ? 'text-zinc-200' : 'text-zinc-600'}`} />
                 <div>
                   <div className="text-xs font-semibold">Microfone</div>
-                  <div className="text-[10px] text-zinc-500">Sua Voz</div>
+                  <div className="text-[10px] text-zinc-500">Use fone de ouvido</div>
                 </div>
               </div>
               <div
@@ -409,7 +411,7 @@ export const SettingsCard: FC<SettingsCardProps> = ({
                 <input
                   type="range"
                   min="0"
-                  max="1.5"
+                  max="1"
                   step="0.05"
                   value={settings.gameVolume ?? 1.0}
                   onChange={(e) => updateSetting('gameVolume', parseFloat(e.target.value))}
@@ -440,16 +442,16 @@ export const SettingsCard: FC<SettingsCardProps> = ({
             </div>
           )}
 
-          {/* Modo Anti-Eco Discord */}
+          {/* Modo Anti-Eco Discord (sem efeito com app alvo: só aquele app já é capturado) */}
           <div
             className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
-              settings.isolateDiscord
+              antiEcoOn
                 ? 'border-zinc-500/50 bg-zinc-800/80 text-zinc-100'
                 : 'border-white/[0.06] bg-surface-300/40 text-zinc-500'
             }`}
           >
             <div className="flex items-center gap-2.5">
-              <div className={`p-1.5 rounded-lg ${settings.isolateDiscord ? 'bg-zinc-700 text-zinc-200' : 'bg-zinc-800 text-zinc-500'}`}>
+              <div className={`p-1.5 rounded-lg ${antiEcoOn ? 'bg-zinc-700 text-zinc-200' : 'bg-zinc-800 text-zinc-500'}`}>
                 <VolumeX className="h-4 w-4" />
               </div>
               <div className="text-left">
@@ -465,22 +467,24 @@ export const SettingsCard: FC<SettingsCardProps> = ({
                   </button>
                 </div>
                 <div className="text-[10px] text-zinc-400">
-                  Filtro de eco para amigos na call não se ouvirem
+                  {hasTargetApp
+                    ? 'Sem efeito: com app alvo só o som dele é transmitido'
+                    : 'Transmite todo o som do PC, menos o Discord (a call não vaza)'}
                 </div>
               </div>
             </div>
 
             <button
               type="button"
-              disabled={isStreaming}
+              disabled={isStreaming || hasTargetApp}
               onClick={() => updateSetting('isolateDiscord', !settings.isolateDiscord)}
               className={`w-8 h-4.5 rounded-full transition-colors relative flex items-center px-0.5 ${
-                settings.isolateDiscord ? 'bg-zinc-200' : 'bg-zinc-700'
-              } ${isStreaming ? 'opacity-50 cursor-not-allowed' : ''}`}
+                antiEcoOn ? 'bg-zinc-200' : 'bg-zinc-700'
+              } ${isStreaming || hasTargetApp ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <div
                 className={`w-3.5 h-3.5 rounded-full transition-transform ${
-                  settings.isolateDiscord ? 'bg-zinc-950 translate-x-3.5' : 'bg-zinc-400 translate-x-0'
+                  antiEcoOn ? 'bg-zinc-950 translate-x-3.5' : 'bg-zinc-400 translate-x-0'
                 }`}
               />
             </button>

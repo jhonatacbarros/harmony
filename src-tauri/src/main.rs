@@ -34,7 +34,7 @@ async fn get_running_processes() -> Result<Vec<AppProcess>, String> {
 async fn start_native_audio_capture(
     target_pid: Option<u32>,
     state: State<'_, AppStateWrapper>,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     let loopback = Arc::clone(&state.server.audio_loopback);
     tokio::task::spawn_blocking(move || loopback.start_capture(target_pid))
         .await

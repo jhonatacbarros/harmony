@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type FC } from 'react';
-import { MonitorPlay, PauseCircle, Volume2, VolumeX, Maximize2, Radio } from 'lucide-react';
+import { useEffect, useRef, type FC } from 'react';
+import { MonitorPlay, PauseCircle, Maximize2, Radio } from 'lucide-react';
 import { StreamStatus, PeerStats } from '../types';
 
 interface VideoPreviewProps {
@@ -39,7 +39,6 @@ export const VideoPreview: FC<VideoPreviewProps> = ({
   peerStats = {},
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [isMuted, setIsMuted] = useState(true);
 
   useEffect(() => {
     if (videoRef.current) {
@@ -70,7 +69,8 @@ export const VideoPreview: FC<VideoPreviewProps> = ({
             ref={videoRef}
             autoPlay
             playsInline
-            muted={isMuted}
+            // Always muted: playing the mix locally would be re-captured into the stream (echo)
+            muted
             className={`h-full w-full object-contain transition-all duration-500 ${
               status === 'paused' ? 'opacity-30 filter grayscale blur-xs scale-[0.99]' : 'opacity-100 scale-100'
             }`}
@@ -145,13 +145,6 @@ export const VideoPreview: FC<VideoPreviewProps> = ({
 
           {/* Bottom Right Floating Preview Actions */}
           <div className="absolute bottom-3 right-3 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-            <button
-              onClick={() => setIsMuted(!isMuted)}
-              className="p-2 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 text-white border border-white/10 backdrop-blur-md transition-all active:scale-95"
-              title={isMuted ? 'Ouvir Som Localmente' : 'Silenciar Preview Local'}
-            >
-              {isMuted ? <VolumeX className="h-3.5 w-3.5 text-zinc-400" /> : <Volume2 className="h-3.5 w-3.5 text-zinc-200" />}
-            </button>
             <button
               onClick={handleToggleFullscreen}
               className="p-2 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 text-white border border-white/10 backdrop-blur-md transition-all active:scale-95"

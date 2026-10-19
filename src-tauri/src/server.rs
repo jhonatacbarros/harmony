@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{broadcast, mpsc, Mutex};
 use tower_http::cors::CorsLayer;
 
 const VIEWER_HTML: &str = include_str!("../../public-viewer/index.html");
@@ -228,7 +228,13 @@ async fn ws_audio_loopback_handler(
 async fn handle_audio_loopback_socket(mut socket: WebSocket, state: AppState) {
     let mut rx = state.audio_loopback.sender.subscribe();
 
-    while let Ok(buffer) = rx.recv().await {
+    loop {
+        let buffer = match rx.recv().await {
+            Ok(buffer) => buffer,
+            // A stall dropped some chunks; the player re-buffers, keep streaming.
+            Err(broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(broadcast::error::RecvError::Closed) => break,
+        };
         if socket.send(Message::Binary(buffer)).await.is_err() {
             break;
         }

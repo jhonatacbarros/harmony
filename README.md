@@ -48,24 +48,19 @@ Você pode baixar a versão mais recente pronta para Windows (`.exe` ou `.msi`) 
 3. Ative as chaves **"Som do Jogo"** e **"Ativar Cloudflare Quick Tunnel"**.
 4. *(Opcional)* Defina um **PIN de Acesso**.
 5. Clique no botão **"Iniciar Transmissão de Tela"**.
-6. Na janela do Windows que abrir:
-   - Para transmitir apenas o som do jogo **sem o Discord**: vá na aba **"Janela"** e escolha a janela do jogo.
-   - Para transmitir todo o som do computador: vá na aba **"Tela Inteira"** e marque **"Compartilhar áudio do sistema"**.
+6. Na janela do Windows que abrir, escolha a tela ou a janela do jogo. O áudio é capturado pelo Harmony (veja abaixo), não pelo pop-up.
 7. Copie o **Link Público (Cloudflare)** gerado e envie para seus amigos!
 
 ---
 
 ## 🎧 Como Evitar que Amigos no Discord se Ouçam na Stream
 
-Quando você está em call no Discord com os mesmos amigos que estão assistindo à stream, o Windows pode transmitir a voz deles de volta se você capturar a "Tela Inteira". Existem **2 soluções simples**:
+Quando você está em call no Discord com os mesmos amigos que estão assistindo à stream, capturar o áudio do sistema inteiro manda a voz deles de volta. O Harmony resolve isso igual ao Discord, com a captura de áudio por processo do Windows (WASAPI Process Loopback, Windows 10 2004+):
 
-1. **Método 1 (Recomendado - Zero Instalação):**
-   * Ao clicar em *Iniciar Transmissão*, escolha a aba **"Janela"** e selecione o jogo.
-   * Dessa forma, o Windows captura **exclusivamente o áudio do jogo**, ignorando completamente a chamada do Discord!
+1. **Modo Anti-Eco Discord (padrão):** transmite todo o som do PC **exceto o Discord**. Abra o Discord antes de iniciar a transmissão e não assista à própria live com som no mesmo PC (o som dela voltaria para a transmissão).
+2. **App alvo:** escolha o jogo na lista e só o som dele vai para a live.
 
-2. **Método 2 (Separar Saída no Discord):**
-   * No Discord, vá em **Configurações de Usuário ⚙️ > Voz e Vídeo > Dispositivo de Saída**.
-   * Escolha o seu fone/headset específico em vez de "Default" (Padrão). O Harmony continuará transmitindo o áudio padrão dos jogos sem capturar o canal do Discord.
+Usando microfone na live? Use fone de ouvido, senão o mic capta o jogo e a call pela caixa de som.
 
 ---
 
