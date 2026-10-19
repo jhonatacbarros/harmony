@@ -54,6 +54,8 @@
 
     <!-- Status & Fullscreen Actions -->
     <div class="flex items-center gap-2.5">
+      <div id="netBadge" class="hidden rounded-full bg-zinc-900/90 border border-white/10 px-3 py-1 text-[11px] font-mono text-zinc-300 backdrop-blur-xl"></div>
+
       <div id="statusBadge" class="flex items-center gap-2 rounded-full bg-zinc-900/90 border border-white/10 px-3.5 py-1 text-xs font-medium text-zinc-300 backdrop-blur-xl">
         <span id="statusDot" class="h-2 w-2 rounded-full bg-zinc-500"></span>
         <span id="statusText" class="font-mono text-[11px]">Conectando...</span>
@@ -74,6 +76,7 @@
       autoplay
       playsinline
       class="max-w-full max-h-full w-full h-full object-contain"
+      style="image-rendering: -webkit-optimize-contrast;"
     ></video>
 
     <!-- Floating Audio Unlock Banner -->
@@ -158,14 +161,8 @@
   </main>
 
   <script>
-    const ICE_SERVERS = {
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:stun3.l.google.com:19302' }
-      ]
-    };
+    // ?relay=1 forces TURN, to test the fallback path
+    const FORCE_RELAY = new URLSearchParams(location.search).get('relay') === '1';
 
     const remoteVideo = document.getElementById('remoteVideo');
     const statusText = document.getElementById('statusText');
@@ -180,10 +177,11 @@
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     const volumeSlider = document.getElementById('volumeSlider');
     const muteBtn = document.getElementById('muteBtn');
+    const netBadge = document.getElementById('netBadge');
 
     let pc = null;
     let ws = null;
-    let viewerId = 'viewer_' + Math.random().toString(36).substr(2, 9);
+    // No client-side viewer id: the server assigns one and stamps it on our messages
     let enteredPin = '';
     let hasReceivedStream = false;
     let audioUnlocked = false;
@@ -213,8 +211,12 @@
       }
     }
 
-    async function startWebRTC() {
-      pc = new RTCPeerConnection(ICE_SERVERS);
+    async function startWebRTC(iceServers) {
+      if (pc) pc.close();
+      pc = new RTCPeerConnection({
+        iceServers: iceServers || [],
+        iceTransportPolicy: FORCE_RELAY ? 'relay' : 'all'
+      });
       hasReceivedStream = false;
 
       pc.ontrack = (event) => {
@@ -229,20 +231,12 @@
             remoteVideo.srcObject = stream;
             updateStatus('live', 'AO VIVO');
 
-            // Ultra low-latency playback configuration
-            if (event.receiver) {
-              if ('playoutDelayHint' in event.receiver) {
-                event.receiver.playoutDelayHint = 0;
-              }
-              if ('jitterBufferTarget' in event.receiver) {
-                event.receiver.jitterBufferTarget = 0;
-              }
-            }
-
             // Start muted so browser autoplay policies allow the video to render.
             remoteVideo.muted = !audioUnlocked;
             playRemoteVideo();
           }
+
+          setJitterBuffer(currentJitterBufferMs);
 
           if (!audioUnlocked && stream.getAudioTracks().length > 0) {
             unmuteOverlay.classList.remove('hidden');
@@ -254,7 +248,6 @@
         if (event.candidate && ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({
             type: 'candidate',
-            senderId: viewerId,
             payload: event.candidate
           }));
         }
@@ -269,7 +262,6 @@
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
           type: 'offer',
-          senderId: viewerId,
           pin: enteredPin,
           payload: offer
         }));
@@ -278,13 +270,12 @@
 
     function connectWebSocket() {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws/viewer?id=${viewerId}&pin=${encodeURIComponent(enteredPin)}`;
+      const wsUrl = `${protocol}//${window.location.host}/ws/viewer?pin=${encodeURIComponent(enteredPin)}`;
       
       ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
         updateStatus('connecting', 'Negociando P2P...');
-        startWebRTC();
       };
 
       ws.onmessage = async (event) => {
@@ -294,6 +285,12 @@
           if (msg.type === 'pin_required') {
             pinModal.classList.remove('hidden');
             if (msg.error) pinError.classList.remove('hidden');
+            return;
+          }
+
+          // Sent by the server once the PIN is accepted; carries STUN/TURN servers
+          if (msg.type === 'config') {
+            startWebRTC(msg.iceServers);
             return;
           }
 
@@ -321,16 +318,71 @@
       };
     }
 
-    // Low-Latency Automatic Drift Watchdog (< 200ms lag)
-    setInterval(() => {
-      if (remoteVideo && !remoteVideo.paused && remoteVideo.buffered.length > 0) {
-        const bufferedEnd = remoteVideo.buffered.end(remoteVideo.buffered.length - 1);
-        const lag = bufferedEnd - remoteVideo.currentTime;
-        if (lag > 0.35) {
-          remoteVideo.currentTime = bufferedEnd - 0.05;
-        }
+    // Connection quality badge, using Moonlight's thresholds: poor at >=30% video
+    // packet loss in one interval or >=15% in two in a row; good again at <=5%.
+    let lastLossSample = null;
+    let highLossStreak = 0;
+    let poorConnection = false;
+
+    // jitterBufferTarget (ms) is a playout-delay floor. 80ms leaves room for one
+    // NACK retransmit; on a poor link 200ms trades latency for fewer freezes.
+    const JITTER_BUFFER_GOOD_MS = 80;
+    const JITTER_BUFFER_POOR_MS = 200;
+    let currentJitterBufferMs = JITTER_BUFFER_GOOD_MS;
+
+    function setJitterBuffer(ms) {
+      currentJitterBufferMs = ms;
+      if (!pc) return;
+      pc.getReceivers().forEach((r) => {
+        if ('jitterBufferTarget' in r) r.jitterBufferTarget = ms;
+      });
+    }
+
+    setInterval(async () => {
+      if (!pc || pc.connectionState !== 'connected') {
+        netBadge.classList.add('hidden');
+        lastLossSample = null;
+        return;
       }
-    }, 1000);
+      try {
+        const report = await pc.getStats();
+        let inbound = null;
+        let pairId = null;
+        report.forEach((s) => {
+          if (s.type === 'inbound-rtp' && s.kind === 'video') inbound = s;
+          if (s.type === 'transport' && s.selectedCandidatePairId) pairId = s.selectedCandidatePairId;
+        });
+        if (!inbound) return;
+
+        if (lastLossSample) {
+          const lost = inbound.packetsLost - lastLossSample.lost;
+          const received = inbound.packetsReceived - lastLossSample.received;
+          const loss = lost + received > 0 ? lost / (lost + received) : 0;
+          highLossStreak = loss >= 0.15 ? highLossStreak + 1 : 0;
+          if (loss >= 0.30 || highLossStreak >= 2) poorConnection = true;
+          else if (loss <= 0.05) poorConnection = false;
+        }
+        const wantedBuffer = poorConnection ? JITTER_BUFFER_POOR_MS : JITTER_BUFFER_GOOD_MS;
+        if (wantedBuffer !== currentJitterBufferMs) setJitterBuffer(wantedBuffer);
+        lastLossSample = { lost: inbound.packetsLost, received: inbound.packetsReceived };
+
+        const pair = pairId ? report.get(pairId) : null;
+        // Relayed if either side goes through TURN
+        const isRelay = (id) => report.get(id)?.candidateType === 'relay';
+        const route = pair && (isRelay(pair.localCandidateId) || isRelay(pair.remoteCandidateId)) ? 'TURN' : 'P2P';
+        const rtt = pair && pair.currentRoundTripTime !== undefined ? ` · ${Math.round(pair.currentRoundTripTime * 1000)}ms` : '';
+        const res = inbound.frameHeight ? ` · ${inbound.frameHeight}p${Math.round(inbound.framesPerSecond || 0)}` : '';
+
+        const fec = inbound.fecPacketsReceived > 0 ? ' · FEC' : '';
+
+        netBadge.textContent = (poorConnection ? '⚠ Conexão ruim · ' : '') + route + res + rtt + fec;
+        netBadge.className = poorConnection
+          ? 'rounded-full bg-amber-500/10 border border-amber-500/30 px-3 py-1 text-[11px] font-mono text-amber-300 backdrop-blur-xl'
+          : 'rounded-full bg-zinc-900/90 border border-white/10 px-3 py-1 text-[11px] font-mono text-zinc-300 backdrop-blur-xl';
+      } catch (e) {
+        // peer closed mid-poll
+      }
+    }, 2000);
 
     // Volume Slider
     volumeSlider.addEventListener('input', (e) => {

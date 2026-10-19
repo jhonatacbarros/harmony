@@ -5,7 +5,7 @@ import { SettingsCard } from './components/SettingsCard';
 import { StreamControls } from './components/StreamControls';
 import { ConnectionInfo } from './components/ConnectionInfo';
 import { useWebRTC } from './hooks/useWebRTC';
-import { StreamSettings } from './types';
+import { StreamSettings, SessionInfo, resolveBitrateMbps } from './types';
 import { HelpCircle, Gamepad2 } from 'lucide-react';
 
 // Safe Tauri invoke helper
@@ -33,15 +33,19 @@ export function App() {
     port: 8080,
     pin: '',
     enableCloudflare: true,
+    codecPreference: 'h264',
+    contentMode: 'motion',
   });
 
   const [localIp, setLocalIp] = useState<string>('localhost');
   const [cloudflareUrl, setCloudflareUrl] = useState<string | null>(null);
+  const [startError, setStartError] = useState<string | null>(null);
 
   const {
     status,
     stream,
     viewerCount,
+    peerStats,
     errorMessage,
     startStream,
     togglePause,
@@ -59,11 +63,20 @@ export function App() {
 
   const handleStart = async () => {
     try {
-      // 1. Tell Tauri Rust backend to start HTTP & WebSocket signaling server
-      await tauriInvoke('start_stream_server', {
-        port: settings.port,
-        pin: settings.pin || null,
-      });
+      // 1. Tell Tauri Rust backend to start HTTP & WebSocket signaling server.
+      // Invoked directly (not via tauriInvoke) so a failure like a busy port reaches the UI.
+      setStartError(null);
+      let session: SessionInfo;
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        session = await invoke<SessionInfo>('start_stream_server', {
+          port: settings.port,
+          pin: settings.pin || null,
+        });
+      } catch (err) {
+        setStartError(`Não foi possível iniciar o servidor: ${err}`);
+        return;
+      }
 
       // 2. Start Cloudflare tunnel if enabled (non-blocking)
       if (settings.enableCloudflare) {
@@ -91,7 +104,7 @@ export function App() {
       }
 
       // 3. Start local WebRTC screen/audio capture immediately
-      await startStream();
+      await startStream(session);
     } catch (err) {
       console.error('Error initiating stream session:', err);
     }
@@ -121,11 +134,13 @@ export function App() {
             status={status}
             quality={settings.quality}
             fps={settings.fps}
+            bitrateMbps={resolveBitrateMbps(settings)}
+            peerStats={peerStats}
           />
 
           <StreamControls
             status={status}
-            errorMessage={errorMessage}
+            errorMessage={errorMessage ?? startError}
             onStart={handleStart}
             onPauseToggle={togglePause}
             onStop={handleStop}

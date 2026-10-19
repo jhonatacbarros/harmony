@@ -1,14 +1,10 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { StreamSettings, StreamStatus } from '../types';
+import { StreamSettings, StreamStatus, SessionInfo, PeerStats, ContentMode, resolveBitrateMbps } from '../types';
 
-const ICE_SERVERS = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun3.l.google.com:19302' },
-  ],
-};
+import { tuneRemoteOffer } from '../sdp';
+
+const STATS_INTERVAL_MS = 2000;
+const START_BITRATE_KBPS = 1200;
 
 // Safe Tauri invoke helper
 async function tauriInvoke<T>(cmd: string, args?: any): Promise<T | null> {
@@ -32,34 +28,9 @@ async function tauriInvokeStrict<T>(cmd: string, args?: any): Promise<T> {
   return await invoke<T>(cmd, args);
 }
 
-// Optimize codec preference prioritizing H.264 GPU Hardware Acceleration
-function optimizeCodecs(pc: RTCPeerConnection) {
-  try {
-    const transceivers = pc.getTransceivers();
-    for (const transceiver of transceivers) {
-      if (transceiver.sender.track?.kind === 'video' && 'setCodecPreferences' in transceiver) {
-        const capabilities = RTCRtpSender.getCapabilities('video');
-        if (capabilities) {
-          const h264Codecs = capabilities.codecs.filter(
-            (c) => c.mimeType.toLowerCase() === 'video/h264'
-          );
-          const otherCodecs = capabilities.codecs.filter(
-            (c) => c.mimeType.toLowerCase() !== 'video/h264'
-          );
-          // Put H.264 (NVENC/AMD/Intel hardware) at the top of SDP
-          if (h264Codecs.length > 0) {
-            transceiver.setCodecPreferences([...h264Codecs, ...otherCodecs]);
-          }
-        }
-      }
-    }
-  } catch (err) {
-    console.warn('Could not set codec preferences:', err);
-  }
-}
-
-// Configure max bitrate and maintain-framerate priority on video senders
-async function tuneSenderParameters(pc: RTCPeerConnection, targetBitrate: number) {
+// Bitrate ceiling + fps cap. No floor: congestion control must be free to go
+// below 1 Mbps on a bad link. The mode decides what gives first under pressure.
+async function tuneSenderParameters(pc: RTCPeerConnection, targetBitrate: number, fps: number, mode: ContentMode) {
   try {
     const senders = pc.getSenders();
     for (const sender of senders) {
@@ -69,11 +40,10 @@ async function tuneSenderParameters(pc: RTCPeerConnection, targetBitrate: number
           params.encodings = [{}];
         }
         params.encodings[0].maxBitrate = targetBitrate;
-        params.encodings[0].maxFramerate = 60;
+        params.encodings[0].maxFramerate = fps;
         params.encodings[0].scaleResolutionDownBy = 1.0;
-        // Priority for fluid framerate
         // @ts-ignore
-        params.degradationPreference = 'maintain-framerate';
+        params.degradationPreference = mode === 'motion' ? 'maintain-framerate' : 'maintain-resolution';
         await sender.setParameters(params);
       }
     }
@@ -82,18 +52,42 @@ async function tuneSenderParameters(pc: RTCPeerConnection, targetBitrate: number
   }
 }
 
-// Inject high-bandwidth bitrate limits into SDP
-function boostSdpBitrate(sdp: string, bitrateKbps: number): string {
-  let modified = sdp.replace(
-    /(m=video .*\r\n)/g,
-    `$1b=AS:${bitrateKbps}\r\nb=TIAS:${bitrateKbps * 1000}\r\n`
-  );
-  // Inject Google specific start/max bitrate parameters
-  modified = modified.replace(
-    /a=fmtp:(\d+) (.*)/g,
-    `a=fmtp:$1 $2;x-google-min-bitrate=${Math.floor(bitrateKbps * 0.5)};x-google-max-bitrate=${bitrateKbps};x-google-start-bitrate=${Math.floor(bitrateKbps * 0.8)}`
-  );
-  return modified;
+type StatsSample = { bytesSent: number; timestamp: number };
+
+async function collectPeerStats(pc: RTCPeerConnection, prev?: StatsSample): Promise<[PeerStats, StatsSample | undefined]> {
+  const report = await pc.getStats();
+  const out: PeerStats = {};
+  let sample: StatsSample | undefined;
+  let pairId: string | undefined;
+
+  report.forEach((s: any) => {
+    if (s.type === 'outbound-rtp' && s.kind === 'video') {
+      out.width = s.frameWidth;
+      out.height = s.frameHeight;
+      out.fps = s.framesPerSecond;
+      out.limitation = s.qualityLimitationReason;
+      out.encoder = s.encoderImplementation;
+      out.hardwareEncoder = s.powerEfficientEncoder;
+      sample = { bytesSent: s.bytesSent, timestamp: s.timestamp };
+      if (prev && s.timestamp > prev.timestamp) {
+        out.sendKbps = Math.round(((s.bytesSent - prev.bytesSent) * 8) / (s.timestamp - prev.timestamp));
+      }
+    } else if (s.type === 'transport' && s.selectedCandidatePairId) {
+      pairId = s.selectedCandidatePairId;
+    }
+  });
+
+  const pair: any = pairId ? report.get(pairId) : undefined;
+  if (pair) {
+    if (pair.availableOutgoingBitrate) out.availableKbps = Math.round(pair.availableOutgoingBitrate / 1000);
+    if (pair.currentRoundTripTime !== undefined) out.rttMs = Math.round(pair.currentRoundTripTime * 1000);
+    // Relayed if either side goes through TURN
+    const local = report.get(pair.localCandidateId)?.candidateType;
+    const remote = report.get(pair.remoteCandidateId)?.candidateType;
+    out.route = local === 'relay' || remote === 'relay' ? 'relay' : local;
+  }
+
+  return [out, sample];
 }
 
 export function useWebRTC(settings: StreamSettings) {
@@ -106,15 +100,45 @@ export function useWebRTC(settings: StreamSettings) {
   const peersRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const socketRef = useRef<WebSocket | null>(null);
   const audioSocketRef = useRef<WebSocket | null>(null);
+  const [peerStats, setPeerStats] = useState<Record<string, PeerStats>>({});
+  const statsSamplesRef = useRef<Map<string, StatsSample>>(new Map());
 
   // Audio Graph Nodes for real-time volume mixing
   const audioCtxRef = useRef<AudioContext | null>(null);
   const gameGainRef = useRef<GainNode | null>(null);
   const micGainRef = useRef<GainNode | null>(null);
 
-  // Target Bitrate: 8.5 Mbps for 1080p 60fps, 4.5 Mbps for 720p 60fps
-  const targetBitrateBps = settings.quality === '1080p' ? 8_500_000 : 4_500_000;
-  const targetBitrateKbps = Math.floor(targetBitrateBps / 1000);
+  const targetBitrateBps = Math.round(resolveBitrateMbps(settings) * 1_000_000);
+  const contentMode: ContentMode = settings.contentMode ?? 'motion';
+  // Read via ref: the signaling socket handler outlives renders, and mode can change live
+  const contentModeRef = useRef(contentMode);
+  contentModeRef.current = contentMode;
+
+  // Apply content mode live to the track and every connected viewer (no renegotiation)
+  useEffect(() => {
+    const track = streamRef.current?.getVideoTracks()[0];
+    if (track) track.contentHint = contentMode;
+    peersRef.current.forEach((pc) => tuneSenderParameters(pc, targetBitrateBps, settings.fps, contentMode));
+  }, [contentMode]);
+
+  // Per-viewer link telemetry, like Moonlight's stats overlay
+  useEffect(() => {
+    if (status !== 'live' && status !== 'paused') return;
+    const timer = setInterval(async () => {
+      const next: Record<string, PeerStats> = {};
+      for (const [id, pc] of peersRef.current) {
+        try {
+          const [stats, sample] = await collectPeerStats(pc, statsSamplesRef.current.get(id));
+          if (sample) statsSamplesRef.current.set(id, sample);
+          next[id] = stats;
+        } catch {
+          // peer closed mid-poll
+        }
+      }
+      setPeerStats(next);
+    }, STATS_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [status]);
 
   // Dynamically update game audio and microphone volumes in real-time
   useEffect(() => {
@@ -157,17 +181,20 @@ export function useWebRTC(settings: StreamSettings) {
 
     await tauriInvoke('stop_native_audio_capture');
 
+    statsSamplesRef.current.clear();
+    setPeerStats({});
     setStream(null);
     setViewerCount(0);
     setStatus('idle');
   }, []);
 
   // Handle incoming viewer connection with hardware acceleration & bitrate boosts
-  const handleViewerOffer = useCallback(async (viewerId: string, offer: RTCSessionDescriptionInit) => {
+  // iceServers: per-viewer STUN/TURN credentials the server attaches to the offer
+  const handleViewerOffer = useCallback(async (viewerId: string, offer: RTCSessionDescriptionInit, iceServers: RTCIceServer[] = []) => {
     if (!streamRef.current) return;
 
     try {
-      const pc = new RTCPeerConnection(ICE_SERVERS);
+      const pc = new RTCPeerConnection({ iceServers });
       peersRef.current.set(viewerId, pc);
 
       // 1. Add all tracks from the captured screen/audio stream
@@ -176,9 +203,6 @@ export function useWebRTC(settings: StreamSettings) {
           pc.addTrack(track, streamRef.current);
         }
       });
-
-      // 2. Set H.264 GPU Hardware Acceleration as preferred video codec
-      optimizeCodecs(pc);
 
       pc.onicecandidate = (event) => {
         if (event.candidate && socketRef.current?.readyState === WebSocket.OPEN) {
@@ -193,16 +217,17 @@ export function useWebRTC(settings: StreamSettings) {
         }
       };
 
-      await pc.setRemoteDescription(new RTCSessionDescription(offer));
+      // 2. Codec order, Opus params and start bitrate live in the remote offer (see sdp.ts)
+      const startKbps = Math.min(START_BITRATE_KBPS, Math.round(targetBitrateBps / 1000));
+      await pc.setRemoteDescription({
+        type: offer.type,
+        sdp: tuneRemoteOffer(offer.sdp || '', settings.codecPreference ?? 'h264', startKbps),
+      });
       const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
 
-      // 3. Inject High-Performance Bitrate into SDP
-      const boostedSdp = boostSdpBitrate(answer.sdp || '', targetBitrateKbps);
-      const boostedAnswer = { type: answer.type, sdp: boostedSdp };
-      await pc.setLocalDescription(boostedAnswer);
-
-      // 4. Tune sender parameters for 60 FPS lock & bitrate
-      await tuneSenderParameters(pc, targetBitrateBps);
+      // 3. Bitrate ceiling, fps cap and degradation mode
+      await tuneSenderParameters(pc, targetBitrateBps, settings.fps, contentModeRef.current);
 
       if (socketRef.current?.readyState === WebSocket.OPEN) {
         socketRef.current.send(
@@ -210,7 +235,7 @@ export function useWebRTC(settings: StreamSettings) {
             type: 'answer',
             senderId: 'host',
             targetId: viewerId,
-            payload: boostedAnswer,
+            payload: answer,
           })
         );
       }
@@ -218,19 +243,24 @@ export function useWebRTC(settings: StreamSettings) {
       setViewerCount(peersRef.current.size);
 
       pc.onconnectionstatechange = () => {
-        if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        // 'disconnected' is transient (ICE may recover), so only drop on failed/closed
+        if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+          pc.close();
           peersRef.current.delete(viewerId);
+          statsSamplesRef.current.delete(viewerId);
           setViewerCount(peersRef.current.size);
         }
       };
     } catch (err) {
       console.error(`Error handling offer from viewer ${viewerId}:`, err);
     }
-  }, [targetBitrateBps, targetBitrateKbps]);
+  }, [targetBitrateBps, settings.fps, settings.codecPreference]);
 
   // Connect to the local signaling server
-  const connectSignaling = useCallback((port: number, pin: string) => {
-    const ws = new WebSocket(`ws://localhost:${port}/ws/host?pin=${encodeURIComponent(pin)}`);
+  const connectSignaling = useCallback((port: number, pin: string, token: string) => {
+    const ws = new WebSocket(
+      `ws://localhost:${port}/ws/host?token=${encodeURIComponent(token)}&pin=${encodeURIComponent(pin)}`
+    );
     socketRef.current = ws;
 
     ws.onopen = () => {
@@ -243,7 +273,7 @@ export function useWebRTC(settings: StreamSettings) {
         const msg = JSON.parse(event.data);
 
         if (msg.type === 'offer' && msg.senderId && msg.payload) {
-          await handleViewerOffer(msg.senderId, msg.payload);
+          await handleViewerOffer(msg.senderId, msg.payload, msg.iceServers);
         } else if (msg.type === 'candidate' && msg.senderId && msg.payload) {
           const pc = peersRef.current.get(msg.senderId);
           if (pc) {
@@ -272,7 +302,7 @@ export function useWebRTC(settings: StreamSettings) {
   }, [handleViewerOffer]);
 
   // Start screen and audio capture
-  const startStream = useCallback(async () => {
+  const startStream = useCallback(async (session: SessionInfo) => {
     try {
       setErrorMessage(null);
       setStatus('starting');
@@ -284,6 +314,7 @@ export function useWebRTC(settings: StreamSettings) {
       // selected when the user explicitly chooses a target process.
       const shouldUseNativeProcessAudio = typeof settings.targetProcessPid === 'number';
 
+      // Capture screen with uncompressed stereo audio settings (no echo/noise suppression on game sound)
       const displayStream = await navigator.mediaDevices.getDisplayMedia({
         video: {
           width: { ideal: width, max: width },
@@ -292,14 +323,22 @@ export function useWebRTC(settings: StreamSettings) {
           // @ts-ignore
           cursor: 'always',
         },
-        audio: shouldUseNativeProcessAudio ? false : settings.enableAudio,
+        audio: shouldUseNativeProcessAudio
+          ? false
+          : settings.enableAudio
+          ? {
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false,
+              channelCount: 2,
+              sampleRate: 48000,
+            }
+          : false,
       });
 
-      // Optimize video track for fast-motion games (locks 60 FPS)
       const videoTrack = displayStream.getVideoTracks()[0];
       if (videoTrack) {
-        // @ts-ignore
-        videoTrack.contentHint = 'motion';
+        videoTrack.contentHint = contentModeRef.current;
         videoTrack.onended = () => {
           stopStream();
         };
@@ -307,13 +346,22 @@ export function useWebRTC(settings: StreamSettings) {
 
       let finalStream = displayStream;
 
-      // Build WebAudio Mixing Graph
+      // Build WebAudio Mixing Graph (48kHz stereo studio pipeline)
       const audioCtx = new AudioContext({ sampleRate: 48000 });
       audioCtxRef.current = audioCtx;
       if (audioCtx.state === 'suspended') {
         await audioCtx.resume();
       }
       const destination = audioCtx.createMediaStreamDestination();
+
+      // Master Limiter to prevent clipping / distortion when mixing loud game audio & mic
+      const limiter = audioCtx.createDynamicsCompressor();
+      limiter.threshold.setValueAtTime(-1.0, audioCtx.currentTime); // -1 dBFS ceiling
+      limiter.knee.setValueAtTime(0.0, audioCtx.currentTime);
+      limiter.ratio.setValueAtTime(20.0, audioCtx.currentTime);     // Hard limiting
+      limiter.attack.setValueAtTime(0.002, audioCtx.currentTime);   // 2ms fast attack
+      limiter.release.setValueAtTime(0.05, audioCtx.currentTime);   // 50ms release
+      limiter.connect(destination);
 
       let hasAudioTracks = false;
 
@@ -326,14 +374,20 @@ export function useWebRTC(settings: StreamSettings) {
           });
 
           // Connect to internal audio stream socket
-          const audioWs = new WebSocket(`ws://localhost:${settings.port}/ws/audio_loopback`);
+          const audioWs = new WebSocket(
+            `ws://localhost:${settings.port}/ws/audio_loopback?token=${encodeURIComponent(session.token)}`
+          );
           audioSocketRef.current = audioWs;
           audioWs.binaryType = 'arraybuffer';
 
           const gameGain = audioCtx.createGain();
           gameGain.gain.value = settings.gameVolume ?? 1.0;
-          gameGain.connect(destination);
+          gameGain.connect(limiter);
           gameGainRef.current = gameGain;
+
+          // Continuous playback timeline to eliminate gap/overlap clicks and hissing
+          let nextAudioPlayTime = 0;
+          const JITTER_BUFFER_SEC = 0.05; // 50ms buffer absorbs thread/socket timing jitter
 
           audioWs.onmessage = (e) => {
             if (e.data instanceof ArrayBuffer && audioCtx.state === 'running') {
@@ -352,7 +406,15 @@ export function useWebRTC(settings: StreamSettings) {
                 const source = audioCtx.createBufferSource();
                 source.buffer = buffer;
                 source.connect(gameGain);
-                source.start();
+
+                const currentTime = audioCtx.currentTime;
+                // Re-sync if timing has fallen behind (underflow) or drifted too far ahead (>250ms)
+                if (nextAudioPlayTime < currentTime || nextAudioPlayTime > currentTime + 0.25) {
+                  nextAudioPlayTime = currentTime + JITTER_BUFFER_SEC;
+                }
+
+                source.start(nextAudioPlayTime);
+                nextAudioPlayTime += buffer.duration;
               }
             }
           };
@@ -365,7 +427,7 @@ export function useWebRTC(settings: StreamSettings) {
           const gameGain = audioCtx.createGain();
           gameGain.gain.value = settings.gameVolume ?? 1.0;
           gameSource.connect(gameGain);
-          gameGain.connect(destination);
+          gameGain.connect(limiter);
           gameGainRef.current = gameGain;
           hasAudioTracks = true;
         }
@@ -384,7 +446,7 @@ export function useWebRTC(settings: StreamSettings) {
           const micGain = audioCtx.createGain();
           micGain.gain.value = settings.micVolume ?? 1.0;
           micSource.connect(micGain);
-          micGain.connect(destination);
+          micGain.connect(limiter);
           micGainRef.current = micGain;
           hasAudioTracks = true;
         } catch (micErr) {
@@ -406,7 +468,7 @@ export function useWebRTC(settings: StreamSettings) {
       setStream(finalStream);
 
       // Connect to local signaling server
-      connectSignaling(settings.port, settings.pin);
+      connectSignaling(settings.port, settings.pin, session.token);
     } catch (err: any) {
       console.error('Failed to start stream:', err);
       setStatus('error');
@@ -454,6 +516,7 @@ export function useWebRTC(settings: StreamSettings) {
     status,
     stream,
     viewerCount,
+    peerStats,
     errorMessage,
     startStream,
     togglePause,

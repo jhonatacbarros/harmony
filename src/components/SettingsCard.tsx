@@ -1,6 +1,6 @@
 import { useState, useEffect, type FC } from 'react';
-import { Sliders, Volume2, Mic, Lock, Globe, Server, Cpu, Zap, VolumeX, HelpCircle, RefreshCw, Gamepad2 } from 'lucide-react';
-import { StreamSettings, StreamStatus, AppProcess } from '../types';
+import { Sliders, Volume2, Mic, Lock, Globe, Server, Cpu, Zap, VolumeX, HelpCircle, RefreshCw, Gamepad2, Gauge, Sparkles, MonitorSmartphone } from 'lucide-react';
+import { StreamSettings, StreamStatus, AppProcess, autoBitrateMbps, resolveBitrateMbps } from '../types';
 import { DiscordAudioGuide } from './DiscordAudioGuide';
 
 interface SettingsCardProps {
@@ -147,7 +147,7 @@ export const SettingsCard: FC<SettingsCardProps> = ({
                 >
                   <span className="text-xs font-bold">{q}</span>
                   <span className="text-[10px] opacity-75 mt-0.5">
-                    {q === '720p' ? '1280x720 • ~4.5 Mbps GPU' : '1920x1080 • ~8.5 Mbps GPU'}
+                    {q === '720p' ? '1280x720' : '1920x1080'} • auto {autoBitrateMbps(q, settings.fps)} Mbps
                   </span>
                 </button>
               );
@@ -184,6 +184,144 @@ export const SettingsCard: FC<SettingsCardProps> = ({
                 </button>
               );
             })}
+          </div>
+        </div>
+
+        {/* Modo de Conteúdo (pode mudar ao vivo) */}
+        <div>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="text-xs font-medium text-zinc-300 flex items-center gap-1.5">
+              <MonitorSmartphone className="h-3.5 w-3.5 text-zinc-400" />
+              Tipo de Conteúdo
+            </label>
+            <span className="text-[10px] text-zinc-500 font-mono">Ajustável ao vivo</span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-surface-300 border border-white/[0.05]">
+            {([
+              { mode: 'motion', label: 'Jogo / Vídeo', desc: 'Rede ruim: reduz resolução' },
+              { mode: 'detail', label: 'Desktop / Texto', desc: 'Rede ruim: reduz FPS' },
+            ] as const).map((opt) => {
+              const active = (settings.contentMode ?? 'motion') === opt.mode;
+              return (
+                <button
+                  key={opt.mode}
+                  type="button"
+                  onClick={() => updateSetting('contentMode', opt.mode)}
+                  className={`flex flex-col items-center justify-center py-2 px-3 rounded-lg text-xs transition-all duration-200 ${
+                    active
+                      ? 'bg-zinc-200 text-zinc-950 font-bold shadow-md'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.03]'
+                  }`}
+                >
+                  <span className="text-xs font-bold">{opt.label}</span>
+                  <span className="text-[10px] opacity-75 mt-0.5">{opt.desc}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Codec de Vídeo */}
+        <div>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="text-xs font-medium text-zinc-300 flex items-center gap-1.5">
+              <Sparkles className="h-3.5 w-3.5 text-zinc-400" />
+              Compressão & Codec de Vídeo
+            </label>
+            <span className="text-[10px] text-zinc-500 font-mono">WebRTC Engine</span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-surface-300 border border-white/[0.05]">
+            <button
+              type="button"
+              disabled={isStreaming}
+              onClick={() => updateSetting('codecPreference', 'h264')}
+              className={`relative flex flex-col items-center justify-center py-2 px-3 rounded-lg text-xs transition-all duration-200 ${
+                (settings.codecPreference ?? 'h264') === 'h264'
+                  ? 'bg-zinc-200 text-zinc-950 font-bold shadow-md'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.03]'
+              } ${isStreaming ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              <span className="text-xs font-bold">H.264 High Profile</span>
+              <span className="text-[10px] opacity-75 mt-0.5">GPU em qualquer placa (recomendado)</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={isStreaming}
+              onClick={() => updateSetting('codecPreference', 'av1_vp9')}
+              className={`relative flex flex-col items-center justify-center py-2 px-3 rounded-lg text-xs transition-all duration-200 ${
+                settings.codecPreference === 'av1_vp9'
+                  ? 'bg-zinc-200 text-zinc-950 font-bold shadow-md'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.03]'
+              } ${isStreaming ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              <span className="text-xs font-bold">AV1 / VP9</span>
+              <span className="text-[10px] opacity-75 mt-0.5">GPU AV1 recente, senão usa CPU</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Taxa de Bits (Bitrate) */}
+        <div>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="text-xs font-medium text-zinc-300 flex items-center gap-1.5">
+              <Gauge className="h-3.5 w-3.5 text-zinc-400" />
+              Taxa de Bits de Vídeo (Bitrate)
+            </label>
+            <span className="font-mono text-xs font-bold text-zinc-200 bg-white/[0.06] px-2 py-0.5 rounded border border-white/[0.08]">
+              {resolveBitrateMbps(settings)} Mbps{settings.videoBitrateMbps === undefined ? ' (auto)' : ''}
+            </span>
+          </div>
+
+          <div className="space-y-2.5 rounded-xl bg-surface-300/80 p-3 border border-white/[0.05]">
+            {/* Presets Rápidos — valor é um teto; a rede pode usar menos */}
+            <div className="grid grid-cols-4 gap-1.5">
+              {[
+                { label: 'Auto', mbps: undefined, desc: `${autoBitrateMbps(settings.quality, settings.fps)} Mbps` },
+                { label: 'Leve', mbps: 3, desc: '3 Mbps' },
+                { label: 'Alto', mbps: 10, desc: '10 Mbps' },
+                { label: 'Ultra', mbps: 15, desc: '15 Mbps' },
+              ].map((preset) => {
+                const active = settings.videoBitrateMbps === preset.mbps;
+                return (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    disabled={isStreaming}
+                    onClick={() => updateSetting('videoBitrateMbps', preset.mbps)}
+                    className={`py-1.5 px-2 rounded-lg text-xs text-center transition-all ${
+                      active
+                        ? 'bg-zinc-200 text-zinc-950 font-bold shadow-sm'
+                        : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04] border border-white/[0.04]'
+                    } ${isStreaming ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    <div className="text-[11px] font-semibold">{preset.label}</div>
+                    <div className="text-[9px] opacity-75">{preset.desc}</div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Slider de Ajuste Fino */}
+            <div className="pt-0.5">
+              <input
+                type="range"
+                disabled={isStreaming}
+                min="3"
+                max="15"
+                step="0.5"
+                value={resolveBitrateMbps(settings)}
+                onChange={(e) => updateSetting('videoBitrateMbps', parseFloat(e.target.value))}
+                className="w-full h-1.5 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-zinc-200 disabled:opacity-50"
+              />
+              <div className="flex justify-between text-[10px] text-zinc-500 font-mono mt-1">
+                <span>3 Mbps (Leve)</span>
+                <span>Teto máximo</span>
+                <span>15 Mbps</span>
+              </div>
+            </div>
           </div>
         </div>
 

@@ -1,12 +1,33 @@
 import { useEffect, useRef, useState, type FC } from 'react';
 import { MonitorPlay, PauseCircle, Volume2, VolumeX, Maximize2, Radio } from 'lucide-react';
-import { StreamStatus } from '../types';
+import { StreamStatus, PeerStats } from '../types';
 
 interface VideoPreviewProps {
   stream: MediaStream | null;
   status: StreamStatus;
   quality: string;
   fps: number;
+  bitrateMbps?: number;
+  peerStats?: Record<string, PeerStats>;
+}
+
+const LIMITATION_LABEL: Record<string, string> = {
+  bandwidth: 'limitado: rede',
+  cpu: 'limitado: CPU',
+  other: 'limitado',
+};
+
+function formatPeerStats(s: PeerStats): string {
+  const parts: string[] = [];
+  if (s.width && s.height) parts.push(`${s.width}x${s.height}`);
+  if (s.fps !== undefined) parts.push(`${Math.round(s.fps)}fps`);
+  if (s.sendKbps !== undefined) parts.push(`${(s.sendKbps / 1000).toFixed(1)}M`);
+  if (s.availableKbps !== undefined) parts.push(`banda ${(s.availableKbps / 1000).toFixed(1)}M`);
+  if (s.rttMs !== undefined) parts.push(`${s.rttMs}ms`);
+  if (s.route) parts.push(s.route === 'relay' ? 'TURN' : 'P2P');
+  if (s.hardwareEncoder !== undefined) parts.push(s.hardwareEncoder ? 'HW' : 'SW');
+  if (s.limitation && LIMITATION_LABEL[s.limitation]) parts.push(LIMITATION_LABEL[s.limitation]);
+  return parts.join(' · ');
 }
 
 export const VideoPreview: FC<VideoPreviewProps> = ({
@@ -14,6 +35,8 @@ export const VideoPreview: FC<VideoPreviewProps> = ({
   status,
   quality,
   fps,
+  bitrateMbps,
+  peerStats = {},
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isMuted, setIsMuted] = useState(true);
@@ -83,6 +106,12 @@ export const VideoPreview: FC<VideoPreviewProps> = ({
               <span>{quality}</span>
               <span className="text-white/30">/</span>
               <span>{fps} FPS</span>
+              {bitrateMbps && (
+                <>
+                  <span className="text-white/30">/</span>
+                  <span className="text-zinc-300">{bitrateMbps}M</span>
+                </>
+              )}
             </div>
 
             {/* Audio Equalizer Visualizer (Monochrome Silver) */}
@@ -96,6 +125,23 @@ export const VideoPreview: FC<VideoPreviewProps> = ({
               </div>
             )}
           </div>
+
+          {/* Per-viewer link telemetry */}
+          {Object.keys(peerStats).length > 0 && (
+            <div className="absolute top-11 left-3 flex flex-col gap-1 pointer-events-none">
+              {Object.entries(peerStats).map(([id, s], i) => (
+                <div
+                  key={id}
+                  title={s.encoder}
+                  className={`rounded-lg bg-zinc-900/90 border px-2.5 py-0.5 text-[10px] font-mono backdrop-blur-md ${
+                    s.limitation && s.limitation !== 'none' ? 'border-amber-500/40 text-amber-300' : 'border-white/10 text-zinc-300'
+                  }`}
+                >
+                  V{i + 1}: {formatPeerStats(s) || 'conectando…'}
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Bottom Right Floating Preview Actions */}
           <div className="absolute bottom-3 right-3 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200">

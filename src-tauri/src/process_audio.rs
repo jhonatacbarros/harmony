@@ -1,21 +1,47 @@
 use serde::{Deserialize, Serialize};
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
+#[cfg(windows)]
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 use tokio::sync::broadcast;
+#[cfg(windows)]
 use wasapi::{initialize_mta, AudioClient, Direction, SampleType, StreamMode, WaveFormat};
+#[cfg(windows)]
 use windows::core::BOOL;
+#[cfg(windows)]
 use windows::Win32::Foundation::{HWND, LPARAM};
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetWindow, GetWindowLongW, GetWindowTextLengthW, GetWindowThreadProcessId,
     IsWindowVisible, GWL_EXSTYLE, GW_OWNER, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
 };
 
+// Per-process capture is WASAPI-only: elsewhere the process list is empty and the
+// UI falls back to the browser's system audio.
+#[cfg(not(windows))]
+fn get_pids_with_visible_windows() -> HashSet<u32> {
+    HashSet::new()
+}
+
+#[cfg(not(windows))]
+fn run_capture_loop(
+    _target_pid: u32,
+    _is_running: Arc<AtomicBool>,
+    _sender: broadcast::Sender<Vec<u8>>,
+    ready_tx: std::sync::mpsc::Sender<Result<(), String>>,
+) {
+    let _ = ready_tx.send(Err(
+        "Captura de áudio por processo requer Windows 10 2004+ ou Windows 11.".to_string(),
+    ));
+}
+
 /// Enumerates top-level, visible, titled windows (the same "alt-tab" heuristic Windows
 /// itself uses) and returns the set of process IDs that own at least one of them. This
 /// is what separates real user-facing apps/games from background services.
+#[cfg(windows)]
 fn get_pids_with_visible_windows() -> HashSet<u32> {
     let mut pids: HashSet<u32> = HashSet::new();
     unsafe {
@@ -27,6 +53,7 @@ fn get_pids_with_visible_windows() -> HashSet<u32> {
     pids
 }
 
+#[cfg(windows)]
 unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
     let pids = &mut *(lparam.0 as *mut HashSet<u32>);
 
@@ -211,6 +238,7 @@ impl AudioLoopbackManager {
 
 /// Runs entirely on a dedicated OS thread: WASAPI's Process Loopback API relies on COM
 /// objects created and driven from a single apartment-threaded context.
+#[cfg(windows)]
 fn run_capture_loop(
     target_pid: u32,
     is_running: Arc<AtomicBool>,

@@ -7,7 +7,7 @@ mod tunnel;
 
 use local_ip_address::local_ip;
 use process_audio::{get_running_app_processes, AppProcess};
-use server::ServerManager;
+use server::{ServerManager, SessionInfo};
 use std::sync::Arc;
 use tauri::State;
 use tunnel::TunnelManager;
@@ -54,7 +54,7 @@ async fn start_stream_server(
     port: u16,
     pin: Option<String>,
     state: State<'_, AppStateWrapper>,
-) -> Result<(), String> {
+) -> Result<SessionInfo, String> {
     state.server.start(port, pin).await
 }
 
